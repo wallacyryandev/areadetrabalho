@@ -22,6 +22,7 @@ let C;try{C=JSON.parse(localStorage.getItem('hubsync'))}catch(e){}C=C||{};
 if(!C.id){C.id=rnd(16,'abcdefghijklmnopqrstuvwxyz0123456789');C.icon=tablet||mobile?'📱':'💻';C.name=tablet?'Tablet':mobile?'Celular':'Computador'}
 C.links=C.links||[];
 const saveC=()=>{try{localStorage.setItem('hubsync',JSON.stringify(C))}catch(e){}},me=()=>({id:C.id,name:C.name,icon:C.icon});
+saveC();
 let P=null,pOpen=false,conns={},dialing={},HC=0,Q=new Set(),QT,UT,H=null,J=null,W=null,SM=null;
 const snd=(c,m)=>{try{c.send(JSON.stringify(m))}catch(e){log('envio',e)}},rcv=d=>{try{return typeof d=='string'?JSON.parse(d):d}catch(e){return null}},log=(...a)=>console.warn('[Hub sync]',...a);
 let LE='';
@@ -58,6 +59,7 @@ if(d.t=='sync')apply(d);else if(d.t=='intro')intro(d.dev);else if(d.t=='meta'&&d
 function link(dev){if(!dev||!dev.id||dev.id==C.id)return 0;const l=C.links.find(x=>x.id==dev.id);if(l){l.name=dev.name;l.icon=dev.icon}else{C.links.push({id:dev.id,name:dev.name,icon:dev.icon});C.bak=1}saveC();return!l}
 function intro(dev){if(link(dev)){connectAll();rr()}}
 function unlinkLocal(id){C.links=C.links.filter(x=>x.id!=id);saveC();const c=conns[id];delete conns[id];if(c){c.hid=null;try{c.close()}catch(e){}}rr()}
+function burst(){let n=0;const iv=setInterval(()=>{connectAll();if(++n>25)clearInterval(iv)},1000)}
 function waitReady(id,ok,bad){const c=conns[id];if(c&&c.open&&c.hid)return ok();W={id,ok,to:setTimeout(()=>{W=null;bad()},20000)}}
 /* ---- telas ---- */
 const mdl=h=>{SM=null;const m=$('#md');m.innerHTML='<div class=box>'+h+'</div>';m.className='on'},rem=()=>{const s=Math.max(0,Math.ceil((H.exp-Date.now())/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
@@ -71,30 +73,46 @@ mdl(`<h3>🔗 Conectar dispositivo</h3><p class=s>Código de conexão</p><div cl
 <div class=row style="margin-top:8px">${x||e?'<button class=b onclick="SY.host()">Gerar novo código</button>':'<button class=b id=ccp onclick="SY.copy()">📋 Copiar código</button>'}<button class="b g" onclick="SY.close()">Fechar</button></div>`)}
 function stopHost(){if(!H)return;clearInterval(H.iv);try{H.peer&&H.peer.destroy()}catch(e){}H=null}
 function host(){stopHost();J=null;peer();const h=H={code:rnd(4,AL)+'-'+rnd(4,AL),exp:Date.now()+api.ttl,st:'prep',peer:null};drawHost();let p;try{p=new Peer(PP+h.code.replace('-',''))}catch(e){h.st='err';return drawHost()}h.peer=p;
-p.on('open',()=>{if(H===h&&h.st=='prep'){h.st='wait';drawHost()}});p.on('connection',c=>c.on('data',d=>pairIn(h,c,rcv(d))));
+p.on('open',()=>{if(H===h&&h.st=='prep'){h.st='wait';drawHost()}});p.on('connection',c=>{const t=$('#cst');if(t&&H===h)t.textContent='Dispositivo encontrado, pareando…';c.on('data',d=>pairIn(h,c,rcv(d)))});setTimeout(()=>{if(H===h&&h.st=='prep'){h.st='err';drawHost()}},10000);
 p.on('error',e=>{log('pareamento',e.type,e.message);if(H!==h)return;if(e.type=='unavailable-id')return host();LE=e.type;h.st='err';drawHost()});
 h.iv=setInterval(()=>{if(H!==h)return;if(Date.now()>=h.exp&&(h.st=='wait'||h.st=='prep')){h.st='exp';clearInterval(h.iv);try{p.destroy()}catch(e){}drawHost()}else{const s=$('#cdn');if(s)s.textContent=rem()}},500)}
-function pairIn(h,c,d){if(!d||d.t!='pair')return;if(H!==h||h.st!='wait'||!d.dev||!d.dev.id||d.dev.id==C.id){try{snd(c,{t:'no'})}catch(e){}return}h.st='used';const others=C.links.filter(x=>x.id!=d.dev.id);link(d.dev);
+function pairIn(h,c,d){if(!d||d.t!='pair')return;if(H!==h||h.st!='wait'||!d.dev||!d.dev.id||d.dev.id==C.id){snd(c,{t:'no',r:d&&d.dev&&d.dev.id==C.id?'self':'used'});return}h.st='used';const others=C.links.filter(x=>x.id!=d.dev.id);link(d.dev);
 snd(c,{t:'paired',dev:me(),peers:others});for(const id in conns){const x=conns[id];if(x.open&&x.hid)try{snd(x,{t:'intro',dev:d.dev})}catch(e){}}
-clearInterval(h.iv);setTimeout(()=>{try{h.peer.destroy()}catch(e){}},1500);drawHost();peer();connectAll();
+clearInterval(h.iv);setTimeout(()=>{try{h.peer.destroy()}catch(e){}},1500);drawHost();peer();connectAll();burst();
 waitReady(d.dev.id,()=>{if(H===h){h.st='done';drawHost()}},()=>{if(H===h){h.st='late';drawHost()}})}
 const norm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8);
 function joinUI(){stopHost();J=null;mdl(`<h3>🔗 Conectar a um dispositivo</h3><label>Digite o código de conexão<input id=ci class=ci placeholder="____-____" maxlength=9 autocomplete=off autocapitalize=characters spellcheck=false oninput="SY.fmt(this)" onkeydown="if(event.key=='Enter')SY.join()"></label><p id=cm class=s style="min-height:22px"></p><div class=row><button class=b id=cg onclick="SY.join()">Conectar</button><button class="b g" onclick="SY.close()">Cancelar</button></div><p class=s style="margin-top:12px">Se este dispositivo já tiver dados, em cada seção (tarefas, notas, etc.) vale a versão mais recente. Uma cópia de segurança é guardada antes de mesclar.</p>`);setTimeout(()=>{const i=$('#ci');i&&i.focus()},50)}
 function join(){const i=$('#ci');if(!i)return;const code=norm(i.value),m=$('#cm'),b=$('#cg');const say=(t,er)=>{m.textContent=t;m.style.color=er?'var(--er)':''};
-if(code.length<8)return say('Digite o código completo (8 caracteres).',1);if(typeof Peer=='undefined')return say('Recurso indisponível neste navegador.',1);
-b.disabled=true;say('Conectando…');peer();const j=J={code,fail:t=>{if(J!==j)return;J=null;clearTimeout(j.to);say(t,1);b.disabled=false}};const t0=Date.now();
-const go=()=>{if(J!==j)return;if(!pOpen)return Date.now()-t0>10000?j.fail('Sem conexão com o servidor de pareamento'+(LE?' ('+LE+')':'')+'. Verifique a internet.'):setTimeout(go,100);
-let c;try{c=P.connect(PP+code,{reliable:true})}catch(e){return j.fail('Não foi possível conectar.')}
-j.to=setTimeout(()=>j.fail('Código inválido ou expirado.'),10000);c.on('open',()=>snd(c,{t:'pair',dev:me()}));
-c.on('data',d=>{d=rcv(d);if(J!==j||!d)return;if(d.t=='no')return j.fail('Código inválido ou já utilizado.');if(d.t!='paired')return;J=null;clearTimeout(j.to);link(d.dev);(d.peers||[]).forEach(link);C.bak=1;saveC();connectAll();say('Conectado! Sincronizando…');
-waitReady(d.dev.id,()=>showOk(0),()=>mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Hub continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`))})};go()}
+if(code.length<8)return say('Digite o código completo (8 caracteres).',1);if(typeof Peer=='undefined')return say('Recurso indisponível neste navegador (WebRTC).',1);
+b.disabled=true;say('1/4 Conectando ao servidor…');let gp=null,c=null;
+const end=()=>setTimeout(()=>{try{gp&&gp.destroy()}catch(e){}},2500),j=J={code,fail:t=>{if(J!==j)return;J=null;clearTimeout(j.to);try{c&&c.close()}catch(e){}try{gp&&gp.destroy()}catch(e){}say(t,1);b.disabled=false}};
+try{gp=new Peer('hubg-'+rnd(14,'abcdefghijklmnopqrstuvwxyz0123456789'))}catch(e){return j.fail('Este navegador não suporta conexão direta (WebRTC).')}
+j.to=setTimeout(()=>j.fail('O servidor de pareamento não respondeu'+(LE?' ('+LE+')':'')+'. Verifique a internet e se algum bloqueador/antivírus está impedindo.'),10000);
+gp.on('error',e=>{log('convidado',e.type,e.message);if(J!==j)return;if(e.type=='peer-unavailable')return j.fail('Código não encontrado. Confira os caracteres ou gere um novo código no outro dispositivo (vale 5 min e só uma vez).');j.fail('Erro de conexão ('+e.type+'). Tente de novo.')});
+gp.on('open',()=>{if(J!==j)return;say('2/4 Procurando o código…');clearTimeout(j.to);
+try{c=gp.connect(PP+code,{reliable:true})}catch(e){return j.fail('Não foi possível conectar.')}
+j.to=setTimeout(()=>j.fail(c.open?'O outro dispositivo não respondeu. Gere um novo código nele.':'Código encontrado, mas a conexão direta não abriu. Isso acontece quando a rede bloqueia WebRTC: tente com os dois aparelhos na mesma Wi-Fi.'),15000);
+c.on('open',()=>{if(J!==j)return;say('3/4 Pareando…');snd(c,{t:'pair',dev:me()})});
+c.on('error',e=>{log('canal',e&&e.type);if(J===j)j.fail('Falha na conexão direta ('+(e&&e.type||'erro')+'). Tente na mesma Wi-Fi.')});
+c.on('data',d=>{d=rcv(d);if(J!==j||!d)return;if(d.t=='no')return j.fail(d.r=='self'?'Este código foi gerado neste mesmo navegador (outra aba). Use outro navegador ou outro aparelho.':'Código já utilizado ou expirado. Gere um novo.');if(d.t!='paired')return;
+J=null;clearTimeout(j.to);link(d.dev);(d.peers||[]).forEach(link);C.bak=1;saveC();peer();say('4/4 Conectado! Sincronizando…');connectAll();burst();end();
+waitReady(d.dev.id,()=>showOk(0),()=>mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Hub continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`))})})}
 const api={ttl:300000,
 init(){S._m=S._m||{};for(const k of SYK){DJ[k]=JSON.stringify(DEF0[k]);LJ[k]=JSON.stringify(S[k]);if(!S._m[k])S._m[k]=LJ[k]===DJ[k]?{t:0,d:''}:{t:Date.now(),d:C.id};HC=Math.max(HC,S._m[k].t)}
 if(C.links.length)peer();
 setInterval(()=>{if(C.links.length||H){peer();if(P&&P.disconnected&&!P.destroyed)try{P.reconnect()}catch(e){}connectAll()}},6000);
 setInterval(()=>{const n=Date.now();for(const id in conns){const c=conns[id];if(!c.open||n-c.last>32000){try{c.close()}catch(e){}if(conns[id]===c){delete conns[id];rr()}}else try{snd(c,{t:'p'})}catch(e){}}},8000);
 const re=()=>{if(C.links.length){try{P&&P.disconnected&&!P.destroyed&&P.reconnect()}catch(e){}peer();connectAll()}rr()};addEventListener('online',re);addEventListener('offline',rr);document.addEventListener('visibilitychange',()=>{if(!document.hidden)re()})},
-chk,host,joinUI,join,card(){const on=openIds();return`<div class=c><h2>🔗 Dispositivos</h2><p class=s>${stat()}${LE&&C.links.length&&!openIds().size?' · erro: '+esc(LE):''}</p><div style="margin:10px 0"><div class=r><span class=dot style="background:var(--ok)"></span><div class=f>${esc(C.icon+' '+C.name)} <span class=s>· este dispositivo</span></div><button class="b g sm" onclick="SY.ren()">✎</button></div>${C.links.map(l=>`<div class=r><span class=dot style="background:${on.has(l.id)?'var(--ok)':'var(--t2)'}"></span><div class=f>${esc(l.icon+' '+l.name)} <span class=s>· ${on.has(l.id)?'conectado':'offline'}</span></div><button class="b g sm" onclick="SY.un('${l.id}')">✕</button></div>`).join('')}</div><div class=row><button class=b onclick="SY.host()">+ Conectar dispositivo</button><button class="b g" onclick="SY.joinUI()">Conectar a um dispositivo</button></div><p class=s style="margin-top:8px">Sem login nem cadastro. Os dados vão direto de um dispositivo para o outro, sem passar por servidor.</p></div>`},
+diag(){stopHost();J=null;const out=[],lc='abcdefghijklmnopqrstuvwxyz0123456789',show=()=>mdl(`<h3>🩺 Teste de conexão</h3><div style="margin:8px 0">${out.map(x=>`<div class=r>${x}</div>`).join('')}</div><p class=s>Este teste usa dois pontos temporários neste aparelho para verificar o servidor de pareamento e a conexão direta (WebRTC).</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button><button class="b g" onclick="SY.diag()">Testar de novo</button></div>`),t0=Date.now();let a=null,b=null,done=0;
+const kill=()=>{done=1;clearTimeout(to);setTimeout(()=>{try{a&&a.destroy()}catch(e){}try{b&&b.destroy()}catch(e){}},1500)},fail=m=>{if(done)return;out[out.length-1]='❌ '+m;show();kill()};
+if(typeof Peer=='undefined'){out.push('');return fail('Biblioteca de conexão não carregou (index.js ausente ou bloqueado).')}
+out.push('⏳ Conectando ao servidor de pareamento…');show();const to=setTimeout(()=>fail('Sem resposta do servidor em 12 s. Internet, firewall, antivírus ou extensão bloqueando wss://0.peerjs.com.'),12000);
+try{a=new Peer('hubt-'+rnd(10,lc))}catch(e){return fail('WebRTC indisponível neste navegador.')}
+a.on('error',e=>fail('Erro no servidor: '+e.type));a.on('connection',c=>c.on('data',()=>{}));
+a.on('open',()=>{if(done)return;out[out.length-1]='✅ Servidor de pareamento respondeu ('+(Date.now()-t0)+' ms)';out.push('⏳ Testando conexão direta (WebRTC)…');show();const t1=Date.now();
+try{b=new Peer('hubt-'+rnd(10,lc))}catch(e){return fail('WebRTC indisponível.')}b.on('error',e=>fail('Falha na conexão direta: '+e.type));
+b.on('open',()=>{const c=b.connect(a.id,{reliable:true});c.on('error',e=>fail('Falha na conexão direta: '+(e&&e.type)));c.on('open',()=>{if(done)return;out[out.length-1]='✅ Conexão direta (WebRTC) funcionou ('+(Date.now()-t1)+' ms)';out.push('🟢 Tudo certo neste aparelho. Se o código ainda falhar, o problema é no OUTRO aparelho (rede/bloqueio) ou o código já expirou/foi fechado.');show();kill()})})})},
+chk,host,joinUI,join,card(){const on=openIds();return`<div class=c><h2>🔗 Dispositivos</h2><p class=s>${stat()}${LE&&C.links.length&&!openIds().size?' · erro: '+esc(LE):''}</p><div style="margin:10px 0"><div class=r><span class=dot style="background:var(--ok)"></span><div class=f>${esc(C.icon+' '+C.name)} <span class=s>· este dispositivo</span></div><button class="b g sm" onclick="SY.ren()">✎</button></div>${C.links.map(l=>`<div class=r><span class=dot style="background:${on.has(l.id)?'var(--ok)':'var(--t2)'}"></span><div class=f>${esc(l.icon+' '+l.name)} <span class=s>· ${on.has(l.id)?'conectado':'offline'}</span></div><button class="b g sm" onclick="SY.un('${l.id}')">✕</button></div>`).join('')}</div><div class=row><button class=b onclick="SY.host()">+ Conectar dispositivo</button><button class="b g" onclick="SY.joinUI()">Conectar a um dispositivo</button><button class="b g" onclick="SY.diag()">🩺 Testar conexão</button></div><p class=s style="margin-top:8px">Sem login nem cadastro. Os dados vão direto de um dispositivo para o outro, sem passar por servidor.</p></div>`},
 chip(){if(!C.links.length)return'';const n=openIds().size;return`<a onclick="go('cfg')" style="margin-top:auto;font-size:13px">${n?'🟢 Sincronizado · '+(n+1):'🟡 Reconectando…'}</a>`},
 fmt(i){const v=norm(i.value);i.value=v.length>4?v.slice(0,4)+'-'+v.slice(4):v},
 copy(){const t=H&&H.code;if(!t)return;const ok=()=>{const b=$('#ccp');if(b){b.textContent='✅ Copiado!';setTimeout(()=>{const b2=$('#ccp');b2&&(b2.textContent='📋 Copiar código')},1500)}};const fb=()=>{try{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove();ok()}catch(e){}};navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t).then(ok,fb):fb()},
