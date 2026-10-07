@@ -24,7 +24,10 @@ C.links=C.links||[];
 const saveC=()=>{try{localStorage.setItem('hubsync',JSON.stringify(C))}catch(e){}},me=()=>({id:C.id,name:C.name,icon:C.icon});
 saveC();
 let P=null,pOpen=false,conns={},dialing={},HC=0,Q=new Set(),QT,UT,H=null,J=null,W=null,SM=null;
-const snd=(c,m)=>{try{c.send(JSON.stringify(m))}catch(e){log('envio',e)}},rcv=d=>{try{return typeof d=='string'?JSON.parse(d):d}catch(e){return null}},log=(...a)=>console.warn('[Hub sync]',...a);
+const CH=12000,ST={sd:0,rv:0,lrx:0},ago=t=>{const x=Math.round((Date.now()-t)/1000);return x<60?x+'s':Math.round(x/60)+'min'};let MID=0;
+const snd=(c,m)=>{try{const t=JSON.stringify(m);if(m.t=='sync')ST.sd++;if(t.length<=CH)return c.send(t);const id=(++MID).toString(36)+rnd(3,'abcdefghij'),ps=[];let p=0;while(p<t.length){let e=Math.min(p+CH,t.length);const cc=t.charCodeAt(e-1);if(e<t.length&&cc>=0xD800&&cc<=0xDBFF)e--;ps.push(t.slice(p,e));p=e}ps.forEach((x,i)=>c.send('~'+id+'|'+i+'|'+ps.length+'|'+x))}catch(e){log('envio',e)}},
+rcv=(c,d)=>{try{if(typeof d!='string')return d;if(d[0]!='~')return JSON.parse(d);const a=d.indexOf('|'),b=d.indexOf('|',a+1),e=d.indexOf('|',b+1),id=d.slice(1,a),n=+d.slice(b+1,e);c.bf=c.bf||{};const x=c.bf[id]=c.bf[id]||{p:[],k:0};x.p[+d.slice(a+1,b)]=d.slice(e+1);if(++x.k<n)return null;delete c.bf[id];return JSON.parse(x.p.join(''))}catch(e){log('recebimento',e);return null}},
+log=(...a)=>console.warn('[Hub sync]',...a);
 let LE='';
 const openIds=()=>new Set(Object.keys(conns).filter(i=>conns[i].open&&conns[i].hid));
 const stat=()=>{if(!C.links.length)return'⚪ Não sincronizado';const n=openIds().size;return n?`🟢 Sincronizado · ${n+1} dispositivos conectados`:navigator.onLine?'🟡 Reconectando…':'🔴 Sem internet'};
@@ -33,33 +36,33 @@ function chk(){const ch=[];for(const k of SYK){const j=JSON.stringify(S[k]);if(j
 const pack=ks=>({t:'sync',now:Date.now(),keys:Object.fromEntries(ks.filter(k=>(S._m[k]||{}).t>0).map(k=>[k,{v:S[k],m:S._m[k]}]))});
 function flush(){const ks=[...Q];Q.clear();if(!ks.length)return;const m=pack(ks);for(const id in conns){const c=conns[id];if(c.open&&c.hid)try{snd(c,m)}catch(e){}}}
 const fix=(k,v,off)=>{if(k=='timer'&&v&&v.start)v.start+=off;if(k=='active'&&v){if(v.start)v.start+=off;if(v.rest)v.rest+=off}return v};
-const newer=(a,b)=>a.t>b.t||(a.t==b.t&&a.d>b.d);
+const newer=(a,b)=>a.t>b.t||(a.t==b.t&&a.d>b.d),dg=()=>({t:'dg',m:Object.fromEntries(SYK.map(k=>[k,S._m[k]||{t:0,d:''}]))});
 function apply(d){const off=Date.now()-d.now;let n=0;for(const k in d.keys){if(!SYK.includes(k))continue;const o=d.keys[k],m=o.m||{t:0,d:''};HC=Math.max(HC,m.t);if(!newer(m,S._m[k]||{t:0,d:''}))continue;
 if(!n&&C.bak){try{localStorage.setItem('hub_pre_sync',JSON.stringify(S))}catch(e){}C.bak=0;saveC()}
 S[k]=fix(k,o.v,off);S._m[k]=m;LJ[k]=JSON.stringify(S[k]);n++}
 if(n){sv();if(S.name&&$('#md h3')&&$('#md h3').textContent=='Seu nome')$('#md').className='';if(FO){if(!S.timer.start&&!S.timer.acc)fx();else $('#fl').textContent=sn(S.timer.sel)}rr()}}
-function rr(){clearTimeout(UT);UT=setTimeout(function f(){const a=document.activeElement;if(a&&a.closest&&a.closest('#mn')&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&!/checkbox|range/.test(a.type))return setTimeout(f,1500);render()},60)}
+function rr(){clearTimeout(UT);let n=0;UT=setTimeout(function f(){const a=document.activeElement;if(n++<3&&a&&a.closest&&a.closest('#mn')&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&!/checkbox|range/.test(a.type)){UT=setTimeout(f,1500);return}render()},60)}
 /* ---- conexão ---- */
 function peer(){if(P||typeof Peer=='undefined')return;let p;try{p=P=new Peer(DP+C.id)}catch(e){P=null;return}
-p.on('open',()=>{pOpen=true;rr();connectAll()});
+p.on('open',()=>{pOpen=true;rr();connectAll();burst()});
 p.on('connection',c=>wire(c,0));
 p.on('disconnected',()=>{pOpen=false;rr();setTimeout(()=>{try{P===p&&!p.destroyed&&p.reconnect()}catch(e){}},3000)});
 p.on('close',()=>{if(P===p){P=null;pOpen=false}rr();setTimeout(()=>{if(C.links.length||H)peer()},5000)});
 p.on('error',e=>{log('peer',e.type,e.message);if(e.type!='peer-unavailable'){LE=e.type;rr()}if(e.type=='peer-unavailable'){const q=/hubd-([a-z0-9]+)/.exec(e.message||'');if(q)delete dialing[q[1]];if(J&&String(e.message).includes(J.code))J.fail('Código inválido ou expirado.');return}if(e.type=='unavailable-id'){try{p.destroy()}catch(x){}}})}
 function connectAll(){if(!P||!pOpen)return;C.links.forEach(l=>{const c=conns[l.id];if(C.id<l.id&&!(c&&c.open))dial(l.id)})}
-function dial(id){if(dialing[id]&&Date.now()-dialing[id]<9000)return;dialing[id]=Date.now();let c;try{c=P.connect(DP+id,{reliable:true})}catch(e){return}c.init=1;c.on('close',()=>{delete dialing[id]});wire(c,1)}
-function wire(c,init){c.last=Date.now();c.on('open',()=>{if(init)try{snd(c,{t:'hi',dev:me()})}catch(e){}});c.on('data',d=>msg(c,rcv(d)));c.on('close',()=>drop(c));c.on('error',e=>log('conexão',e&&(e.type||e.message||e)))}
+function dial(id){if(dialing[id]&&Date.now()-dialing[id]<9000)return;dialing[id]=Date.now();let c;try{c=P.connect(DP+id,{reliable:true,serialization:'raw'})}catch(e){return}c.init=1;c.on('close',()=>{delete dialing[id]});wire(c,1)}
+function wire(c,init){c.last=Date.now();c.on('open',()=>{if(init)try{snd(c,{t:'hi',dev:me()})}catch(e){}});c.on('data',d=>msg(c,rcv(c,d)));c.on('close',()=>drop(c));c.on('error',e=>log('conexão',e&&(e.type||e.message||e)))}
 function drop(c){if(c.hid&&conns[c.hid]===c){delete conns[c.hid];rr();refOk()}}
 function msg(c,d){if(!d||!d.t)return;c.last=Date.now();
 if(d.t=='hi'){const l=d.dev&&C.links.find(x=>x.id==d.dev.id);if(!l){try{c.close()}catch(e){}return}
 l.name=d.dev.name;l.icon=d.dev.icon;saveC();const old=conns[l.id];if(old&&old!==c){old.hid=null;try{old.close()}catch(e){}}
 c.hid=l.id;conns[l.id]=c;if(!c.init)snd(c,{t:'hi',dev:me()});snd(c,pack(SYK));if(W&&W.id==l.id){const w=W;W=null;clearTimeout(w.to);w.ok()}rr();refOk();return}
 if(!c.hid)return;
-if(d.t=='sync')apply(d);else if(d.t=='intro')intro(d.dev);else if(d.t=='meta'&&d.dev){const l=C.links.find(x=>x.id==c.hid);if(l){l.name=d.dev.name;l.icon=d.dev.icon;saveC();rr()}}else if(d.t=='unlink')unlinkLocal(c.hid)}
+if(d.t=='sync'){ST.rv++;ST.lrx=Date.now();apply(d)}else if(d.t=='dg'){const mine=[],want=[];for(const k of SYK){const rm=(d.m||{})[k]||{t:0,d:''},lm=S._m[k]||{t:0,d:''};if(newer(lm,rm))mine.push(k);else if(newer(rm,lm))want.push(k)}if(mine.length)snd(c,pack(mine));if(want.length)snd(c,{t:'want',ks:want})}else if(d.t=='want')snd(c,pack((d.ks||[]).filter(k=>SYK.includes(k))));else if(d.t=='intro')intro(d.dev);else if(d.t=='meta'&&d.dev){const l=C.links.find(x=>x.id==c.hid);if(l){l.name=d.dev.name;l.icon=d.dev.icon;saveC();rr()}}else if(d.t=='unlink')unlinkLocal(c.hid)}
 function link(dev){if(!dev||!dev.id||dev.id==C.id)return 0;const l=C.links.find(x=>x.id==dev.id);if(l){l.name=dev.name;l.icon=dev.icon}else{C.links.push({id:dev.id,name:dev.name,icon:dev.icon});C.bak=1}saveC();return!l}
 function intro(dev){if(link(dev)){connectAll();rr()}}
 function unlinkLocal(id){C.links=C.links.filter(x=>x.id!=id);saveC();const c=conns[id];delete conns[id];if(c){c.hid=null;try{c.close()}catch(e){}}rr()}
-function burst(){let n=0;const iv=setInterval(()=>{connectAll();if(++n>25)clearInterval(iv)},1000)}
+let BI;function burst(){clearInterval(BI);let n=0;BI=setInterval(()=>{connectAll();if(++n>25)clearInterval(BI)},1000)}
 function waitReady(id,ok,bad){const c=conns[id];if(c&&c.open&&c.hid)return ok();W={id,ok,to:setTimeout(()=>{W=null;bad()},20000)}}
 /* ---- telas ---- */
 const mdl=h=>{SM=null;const m=$('#md');m.innerHTML='<div class=box>'+h+'</div>';m.className='on'},rem=()=>{const s=Math.max(0,Math.ceil((H.exp-Date.now())/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
@@ -73,7 +76,7 @@ mdl(`<h3>🔗 Conectar dispositivo</h3><p class=s>Código de conexão</p><div cl
 <div class=row style="margin-top:8px">${x||e?'<button class=b onclick="SY.host()">Gerar novo código</button>':'<button class=b id=ccp onclick="SY.copy()">📋 Copiar código</button>'}<button class="b g" onclick="SY.close()">Fechar</button></div>`)}
 function stopHost(){if(!H)return;clearInterval(H.iv);try{H.peer&&H.peer.destroy()}catch(e){}H=null}
 function host(){stopHost();J=null;peer();const h=H={code:rnd(4,AL)+'-'+rnd(4,AL),exp:Date.now()+api.ttl,st:'prep',peer:null};drawHost();let p;try{p=new Peer(PP+h.code.replace('-',''))}catch(e){h.st='err';return drawHost()}h.peer=p;
-p.on('open',()=>{if(H===h&&h.st=='prep'){h.st='wait';drawHost()}});p.on('connection',c=>{const t=$('#cst');if(t&&H===h)t.textContent='Dispositivo encontrado, pareando…';c.on('data',d=>pairIn(h,c,rcv(d)))});setTimeout(()=>{if(H===h&&h.st=='prep'){h.st='err';drawHost()}},10000);
+p.on('open',()=>{if(H===h&&h.st=='prep'){h.st='wait';drawHost()}});p.on('connection',c=>{const t=$('#cst');if(t&&H===h)t.textContent='Dispositivo encontrado, pareando…';c.on('data',d=>pairIn(h,c,rcv(c,d)))});setTimeout(()=>{if(H===h&&h.st=='prep'){h.st='err';drawHost()}},10000);
 p.on('error',e=>{log('pareamento',e.type,e.message);if(H!==h)return;if(e.type=='unavailable-id')return host();LE=e.type;h.st='err';drawHost()});
 h.iv=setInterval(()=>{if(H!==h)return;if(Date.now()>=h.exp&&(h.st=='wait'||h.st=='prep')){h.st='exp';clearInterval(h.iv);try{p.destroy()}catch(e){}drawHost()}else{const s=$('#cdn');if(s)s.textContent=rem()}},500)}
 function pairIn(h,c,d){if(!d||d.t!='pair')return;if(H!==h||h.st!='wait'||!d.dev||!d.dev.id||d.dev.id==C.id){snd(c,{t:'no',r:d&&d.dev&&d.dev.id==C.id?'self':'used'});return}h.st='used';const others=C.links.filter(x=>x.id!=d.dev.id);link(d.dev);
@@ -90,18 +93,19 @@ try{gp=new Peer('hubg-'+rnd(14,'abcdefghijklmnopqrstuvwxyz0123456789'))}catch(e)
 j.to=setTimeout(()=>j.fail('O servidor de pareamento não respondeu'+(LE?' ('+LE+')':'')+'. Verifique a internet e se algum bloqueador/antivírus está impedindo.'),10000);
 gp.on('error',e=>{log('convidado',e.type,e.message);if(J!==j)return;if(e.type=='peer-unavailable')return j.fail('Código não encontrado. Confira os caracteres ou gere um novo código no outro dispositivo (vale 5 min e só uma vez).');j.fail('Erro de conexão ('+e.type+'). Tente de novo.')});
 gp.on('open',()=>{if(J!==j)return;say('2/4 Procurando o código…');clearTimeout(j.to);
-try{c=gp.connect(PP+code,{reliable:true})}catch(e){return j.fail('Não foi possível conectar.')}
+try{c=gp.connect(PP+code,{reliable:true,serialization:'raw'})}catch(e){return j.fail('Não foi possível conectar.')}
 j.to=setTimeout(()=>j.fail(c.open?'O outro dispositivo não respondeu. Gere um novo código nele.':'Código encontrado, mas a conexão direta não abriu. Isso acontece quando a rede bloqueia WebRTC: tente com os dois aparelhos na mesma Wi-Fi.'),15000);
 c.on('open',()=>{if(J!==j)return;say('3/4 Pareando…');snd(c,{t:'pair',dev:me()})});
 c.on('error',e=>{log('canal',e&&e.type);if(J===j)j.fail('Falha na conexão direta ('+(e&&e.type||'erro')+'). Tente na mesma Wi-Fi.')});
-c.on('data',d=>{d=rcv(d);if(J!==j||!d)return;if(d.t=='no')return j.fail(d.r=='self'?'Este código foi gerado neste mesmo navegador (outra aba). Use outro navegador ou outro aparelho.':'Código já utilizado ou expirado. Gere um novo.');if(d.t!='paired')return;
+c.on('data',d=>{d=rcv(c,d);if(J!==j||!d)return;if(d.t=='no')return j.fail(d.r=='self'?'Este código foi gerado neste mesmo navegador (outra aba). Use outro navegador ou outro aparelho.':'Código já utilizado ou expirado. Gere um novo.');if(d.t!='paired')return;
 J=null;clearTimeout(j.to);link(d.dev);(d.peers||[]).forEach(link);C.bak=1;saveC();peer();say('4/4 Conectado! Sincronizando…');connectAll();burst();end();
 waitReady(d.dev.id,()=>showOk(0),()=>mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Hub continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`))})})}
 const api={ttl:300000,
 init(){S._m=S._m||{};for(const k of SYK){DJ[k]=JSON.stringify(DEF0[k]);LJ[k]=JSON.stringify(S[k]);if(!S._m[k])S._m[k]=LJ[k]===DJ[k]?{t:0,d:''}:{t:Date.now(),d:C.id};HC=Math.max(HC,S._m[k].t)}
+try{localStorage.setItem('hub',JSON.stringify(S))}catch(e){}try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 if(C.links.length)peer();
-setInterval(()=>{if(C.links.length||H){peer();if(P&&P.disconnected&&!P.destroyed)try{P.reconnect()}catch(e){}connectAll()}},6000);
-setInterval(()=>{const n=Date.now();for(const id in conns){const c=conns[id];if(!c.open||n-c.last>32000){try{c.close()}catch(e){}if(conns[id]===c){delete conns[id];rr()}}else try{snd(c,{t:'p'})}catch(e){}}},8000);
+setInterval(()=>{if(C.links.length||H){peer();if(P&&P.disconnected&&!P.destroyed)try{P.reconnect()}catch(e){}connectAll()}},3000);
+setInterval(()=>{const n=Date.now();for(const id in conns){const c=conns[id];if(!c.open||n-c.last>32000){try{c.close()}catch(e){}if(conns[id]===c){delete conns[id];rr()}}else try{snd(c,dg())}catch(e){}}},8000);
 const re=()=>{if(C.links.length){try{P&&P.disconnected&&!P.destroyed&&P.reconnect()}catch(e){}peer();connectAll()}rr()};addEventListener('online',re);addEventListener('offline',rr);document.addEventListener('visibilitychange',()=>{if(!document.hidden)re()})},
 diag(){stopHost();J=null;const out=[],lc='abcdefghijklmnopqrstuvwxyz0123456789',show=()=>mdl(`<h3>🩺 Teste de conexão</h3><div style="margin:8px 0">${out.map(x=>`<div class=r>${x}</div>`).join('')}</div><p class=s>Este teste usa dois pontos temporários neste aparelho para verificar o servidor de pareamento e a conexão direta (WebRTC).</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button><button class="b g" onclick="SY.diag()">Testar de novo</button></div>`),t0=Date.now();let a=null,b=null,done=0;
 const kill=()=>{done=1;clearTimeout(to);setTimeout(()=>{try{a&&a.destroy()}catch(e){}try{b&&b.destroy()}catch(e){}},1500)},fail=m=>{if(done)return;out[out.length-1]='❌ '+m;show();kill()};
@@ -112,7 +116,8 @@ a.on('error',e=>fail('Erro no servidor: '+e.type));a.on('connection',c=>c.on('da
 a.on('open',()=>{if(done)return;out[out.length-1]='✅ Servidor de pareamento respondeu ('+(Date.now()-t0)+' ms)';out.push('⏳ Testando conexão direta (WebRTC)…');show();const t1=Date.now();
 try{b=new Peer('hubt-'+rnd(10,lc))}catch(e){return fail('WebRTC indisponível.')}b.on('error',e=>fail('Falha na conexão direta: '+e.type));
 b.on('open',()=>{const c=b.connect(a.id,{reliable:true});c.on('error',e=>fail('Falha na conexão direta: '+(e&&e.type)));c.on('open',()=>{if(done)return;out[out.length-1]='✅ Conexão direta (WebRTC) funcionou ('+(Date.now()-t1)+' ms)';out.push('🟢 Tudo certo neste aparelho. Se o código ainda falhar, o problema é no OUTRO aparelho (rede/bloqueio) ou o código já expirou/foi fechado.');show();kill()})})})},
-chk,host,joinUI,join,card(){const on=openIds();return`<div class=c><h2>🔗 Dispositivos</h2><p class=s>${stat()}${LE&&C.links.length&&!openIds().size?' · erro: '+esc(LE):''}</p><div style="margin:10px 0"><div class=r><span class=dot style="background:var(--ok)"></span><div class=f>${esc(C.icon+' '+C.name)} <span class=s>· este dispositivo</span></div><button class="b g sm" onclick="SY.ren()">✎</button></div>${C.links.map(l=>`<div class=r><span class=dot style="background:${on.has(l.id)?'var(--ok)':'var(--t2)'}"></span><div class=f>${esc(l.icon+' '+l.name)} <span class=s>· ${on.has(l.id)?'conectado':'offline'}</span></div><button class="b g sm" onclick="SY.un('${l.id}')">✕</button></div>`).join('')}</div><div class=row><button class=b onclick="SY.host()">+ Conectar dispositivo</button><button class="b g" onclick="SY.joinUI()">Conectar a um dispositivo</button><button class="b g" onclick="SY.diag()">🩺 Testar conexão</button></div><p class=s style="margin-top:8px">Sem login nem cadastro. Os dados vão direto de um dispositivo para o outro, sem passar por servidor.</p></div>`},
+force(){for(const id in conns){const c=conns[id];if(c.open&&c.hid){snd(c,pack(SYK));snd(c,dg())}}rr()},
+chk,host,joinUI,join,card(){const on=openIds();return`<div class=c><h2>🔗 Dispositivos</h2><p class=s>${stat()}${LE&&C.links.length&&!openIds().size?' · erro: '+esc(LE):''}</p>${C.links.length?`<p class=s>↑ ${ST.sd} enviadas · ↓ ${ST.rv} recebidas${ST.lrx?' · última recebida há '+ago(ST.lrx):''}</p>`:''}<div style="margin:10px 0"><div class=r><span class=dot style="background:var(--ok)"></span><div class=f>${esc(C.icon+' '+C.name)} <span class=s>· este dispositivo</span></div><button class="b g sm" onclick="SY.ren()">✎</button></div>${C.links.map(l=>`<div class=r><span class=dot style="background:${on.has(l.id)?'var(--ok)':'var(--t2)'}"></span><div class=f>${esc(l.icon+' '+l.name)} <span class=s>· ${on.has(l.id)?'conectado':'offline'}</span></div><button class="b g sm" onclick="SY.un('${l.id}')">✕</button></div>`).join('')}</div><div class=row><button class=b onclick="SY.host()">+ Conectar dispositivo</button><button class="b g" onclick="SY.joinUI()">Conectar a um dispositivo</button>${C.links.length?'<button class="b g" onclick="SY.force()">↻ Forçar sincronização</button>':''}<button class="b g" onclick="SY.diag()">🩺 Testar conexão</button></div><p class=s style="margin-top:8px">Sem login nem cadastro. Os dados vão direto de um dispositivo para o outro, sem passar por servidor.</p></div>`},
 chip(){if(!C.links.length)return'';const n=openIds().size;return`<a onclick="go('cfg')" style="margin-top:auto;font-size:13px">${n?'🟢 Sincronizado · '+(n+1):'🟡 Reconectando…'}</a>`},
 fmt(i){const v=norm(i.value);i.value=v.length>4?v.slice(0,4)+'-'+v.slice(4):v},
 copy(){const t=H&&H.code;if(!t)return;const ok=()=>{const b=$('#ccp');if(b){b.textContent='✅ Copiado!';setTimeout(()=>{const b2=$('#ccp');b2&&(b2.textContent='📋 Copiar código')},1500)}};const fb=()=>{try{const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove();ok()}catch(e){}};navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t).then(ok,fb):fb()},
