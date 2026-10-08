@@ -9,7 +9,7 @@
    - Cartão do Chrome/Android mostra "Hub Pessoal" no lugar da URL (Media Session completa). */
 const MU=(()=>{
 const el=new Audio();el.preload='metadata';
-let T=[],cur=-1,shuf=0,rep=1,url=null,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[];
+let T=[],cur=-1,shuf=0,rep=1,url=null,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0;
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
@@ -302,6 +302,35 @@ function link(){
 }
 setInterval(link,1000);
 
+/* ---- músicas repetidas ---- */
+/* Agrupa pelo nome "limpo" (sem extensão, acento, maiúscula, "(1)", "cópia"). */
+const nn=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\.[^/.]+$/,'').replace(/\s*[\(\[]?\b(copy|copia)\b[\)\]]?/g,'').replace(/\s*\(\d+\)\s*$/,'').replace(/[^a-z0-9]+/g,' ').trim();
+function dups(){
+  const g=new Map();
+  T.forEach((t,i)=>{const k=nn(t.name);if(!k)return;let a=g.get(k);if(!a){a=[];g.set(k,a)}a.push(i)});
+  return [...g.values()].filter(a=>a.length>1);
+}
+async function rmExact(){
+  const sk=new Set(),L=[];
+  T.forEach((t,i)=>{const k=key(t);sk.has(k)?L.push(i):sk.add(k)});
+  if(!L.length)return;
+  if(!confirm('Remover '+L.length+' cópia(s) idêntica(s) (mesmo nome e tamanho)? Fica uma de cada.'))return;
+  const gone=new Set(),ct=cur>=0?T[cur]:null;
+  for(const i of L){try{await tx('readwrite',s=>s.delete(T[i].id));gone.add(i)}catch(e){}}
+  T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];
+  if(ct){const k=key(ct);cur=T.indexOf(ct);if(cur<0)cur=T.findIndex(x=>key(x)==k)}
+  draw();bls();
+}
+function dcard(){
+  const G=dups(),sk=new Set();let ex=0;
+  T.forEach(t=>{const k=key(t);sk.has(k)?ex++:sk.add(k)});
+  return`<div class=c style="grid-column:1/-1"><div class=row><h2 class=f style="margin:0">🔍 Músicas repetidas</h2><button class="b g sm" onclick="MU.dp()">✕ Fechar</button></div>
+<p class=s style="margin:8px 0">${G.length?G.length+(G.length==1?' grupo':' grupos')+' com nome igual. 🟠 idêntica = mesmo nome e mesmo tamanho. 🔵 parecida = mesmo nome, tamanho diferente (pode ser outra qualidade).':'Nenhuma música repetida encontrada. 🎉'}</p>
+${ex?`<button class=b onclick="MU.rx()">🧹 Remover ${ex} ${ex==1?'cópia idêntica':'cópias idênticas'}</button>`:''}
+${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k]||0)+1});return`<div style="margin-top:14px"><div class=s><b>${esc(nm(T[a[0]].name))}</b></div>${a.map(i=>`<div class=r><div class=f><div>${esc(T[i].name)}</div><div class=s>${mb(T[i].size)} · ${kc[key(T[i])]>1?'🟠 idêntica':'🔵 parecida'}</div></div><button class="b g sm" onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')}</div>`}).join('')}
+${G.length>100?`<p class=s style="margin-top:10px">Mostrando 100 de ${G.length} grupos. Remova alguns para ver o resto.</p>`:''}</div>`;
+}
+
 /* ---- telas ---- */
 const ctrl=(l,pl,sh,rp)=>`<div class=row><button class="b ${sh?'':'g'} sm" onclick="${l}('sh')" title="Aleatório">🔀</button><button class="b g" onclick="${l}('pv')" title="Anterior">⏮</button><button class=b onclick="${l}('tg')">${pl?'⏸ Pausar':'▶ Tocar'}</button><button class="b g" onclick="${l}('nx')" title="Próxima">⏭</button><button class="b ${rp?'':'g'} sm" onclick="${l}('rp')" title="Repetir lista">🔁</button></div>`;
 const bar=(p,d)=>`<div class=row style="margin:14px 0;flex-wrap:nowrap"><span class=s id=mu-c style="min-width:38px">${tm(p)}</span><input id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} style="flex:1;width:auto" aria-label="Posição" oninput="MU.sk(this.value,1)" onchange="MU.sk(this.value)"><span class=s style="min-width:38px;text-align:right">${tm(d)}</span></div>`;
@@ -327,7 +356,7 @@ function resLib(){
 }
 function lcard(){
   return`<div class=c style="grid-column:1/-1"><h2>Biblioteca <label class="b sm" style="float:right;margin:0;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></h2>
-<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length?'':resLib()}</div>`;
+<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length>1?(n=>`<button class="b g sm" style="margin-bottom:8px" onclick="MU.dp()">🔍 Ver músicas repetidas${n?' ('+n+')':''}</button>`)(dups().length):''}${T.length?'':resLib()}</div>`;
 }
 function scard(){
   if(!T.length)return'';
@@ -375,7 +404,7 @@ function resAdd(){
 function padd(){
   return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div></div>`;
 }
-const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():scard()+ban()+pcard()+plcard()+lcard())+dv()+'</div>';
+const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():scard()+(DUP?dcard():'')+ban()+pcard()+plcard()+lcard())+dv()+'</div>';
 
 /* ---- ações de playlist ---- */
 function newPL(then){
@@ -420,7 +449,7 @@ return{
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
   cmd,
   ctl(id){RC=id;el.pause();draw()},
-  take,
+  take,dp(){DUP=!DUP;draw()},rx:rmExact,
   back(){take(RC)},
   sy(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
 };
