@@ -23,6 +23,15 @@ const key=x=>hk(x.name+'|'+x.size),man=()=>T.map(key);
 const setXF=t=>{XF=t;lastX=Date.now();const e=$('#mu-xf');if(e)e.textContent=t};
 const pr=t=>{XF=t;const n=Date.now();if(n-lastX>200){lastX=n;const e=$('#mu-xf');if(e)e.textContent=t}};
 
+/* ---- playlists (só neste aparelho; guardam a chave da música, não o arquivo) ---- */
+let PL=[],PV=null,ctx=null,KM=null;
+try{PL=JSON.parse(localStorage.getItem('hub_playlists'))||[]}catch(e){PL=[]}
+const savePL=()=>{try{localStorage.setItem('hub_playlists',JSON.stringify(PL))}catch(e){}};
+const pget=id=>PL.find(p=>p.id==id);
+const kmap=()=>KM||(KM=new Map(T.map((x,i)=>[key(x),i])));
+const tIdx=k=>{const i=kmap().get(k);return i==null?-1:i};
+const qOf=c=>{const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
+
 /* ---- conexões (vêm do SY, do index.js) ---- */
 const syOk=()=>typeof SY!='undefined'&&SY._conns&&SY._c;
 const openConns=()=>syOk()?Object.values(SY._conns()).filter(c=>c.open&&c.hid):[];
@@ -31,15 +40,16 @@ const sendJ=(c,o)=>{try{c.send(JSON.stringify(o))}catch(e){}};
 
 /* ---- reprodução local ---- */
 const playEl=()=>el.play().catch(e=>{if(e&&e.name=='NotAllowedError'){blocked=1;bcast()}});
-function play(i,auto=1){
+function play(i,auto=1,c){
   if(i<0||i>=T.length)return;
+  if(c!==undefined)ctx=c;
   cur=i;if(url)URL.revokeObjectURL(url);
   url=URL.createObjectURL(T[i].blob);el.src=url;
   if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:nm(T[i].name)});
   if(auto)playEl();
   draw();
 }
-const nextI=d=>{if(!T.length)return -1;if(shuf&&T.length>1){let n;do{n=Math.floor(Math.random()*T.length)}while(n==cur);return n}return(cur+d+T.length)%T.length};
+const nextI=d=>{const q=qOf(ctx);if(!q.length)return -1;if(shuf&&q.length>1){let n;do{n=q[Math.floor(Math.random()*q.length)]}while(n==cur);return n}const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length]};
 const next=()=>{const n=nextI(1);if(n>=0)play(n)};
 const prev=()=>{if(el.currentTime>3)el.currentTime=0;else{const n=nextI(-1);if(n>=0)play(n)}};
 function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pause()}
@@ -53,8 +63,9 @@ el.addEventListener('timeupdate',()=>{
   if(Date.now()-lastB>1000)bcast();
 });
 el.addEventListener('ended',()=>{
-  if(shuf||cur<T.length-1)next();
-  else if(rep)play(0);
+  const q=qOf(ctx),p=q.indexOf(cur);
+  if(shuf||p<q.length-1)next();
+  else if(rep&&q.length)play(q[0]);
   else{draw();bcast()}
 });
 if('mediaSession' in navigator){
@@ -71,7 +82,7 @@ async function add(files){
   for(const f of L){
     const r={name:f.name,size:f.size,blob:f};
     try{r.id=await tx('readwrite',s=>s.add(r))}catch(e){alert('Não foi possível salvar "'+f.name+'". O armazenamento do navegador pode estar cheio.');continue}
-    T.push(r);
+    T.push(r);KM=null;
   }
   if(cur<0&&T.length)play(0,0);else draw();
   bls();
@@ -79,9 +90,10 @@ async function add(files){
 async function del(i){
   if(!confirm('Remover "'+nm(T[i].name)+'" deste aparelho?'))return;
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
+  const k=key(T[i]);PL.forEach(p=>{p.keys=p.keys.filter(x=>x!=k)});savePL();
   if(i==cur){el.pause();el.removeAttribute('src');if(url){URL.revokeObjectURL(url);url=null}cur=-1}
   else if(i<cur)cur--;
-  T.splice(i,1);draw();bls();
+  T.splice(i,1);KM=null;draw();bls();
 }
 
 /* ---- estado enviado aos outros aparelhos (controle remoto) ---- */
@@ -124,7 +136,7 @@ async function endRx(c,tid){
   if(r.got!=r.size)return setXF('Falha ao receber "'+nm(r.name)+'". Tente sincronizar de novo.');
   const rec={name:r.name,size:r.size,blob:new Blob(r.parts,{type:r.type||'audio/mpeg'})};
   try{rec.id=await tx('readwrite',s=>s.add(rec))}catch(e){return setXF('Não foi possível salvar "'+nm(r.name)+'". O armazenamento pode estar cheio.')}
-  T.push(rec);setXF('Recebida: '+nm(r.name));bls();draw();
+  T.push(rec);KM=null;setXF('Recebida: '+nm(r.name));bls();draw();
 }
 
 /* ---- envio de músicas ---- */
@@ -157,7 +169,7 @@ async function sendFiles(c,list){
 
 /* ---- controle remoto ---- */
 function exec(a,v){
-  if(a=='tg')toggle();else if(a=='ps')el.pause();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v);
+  if(a=='tg')toggle();else if(a=='ps')el.pause();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v,1,null);
   else if(a=='sk')el.currentTime=+v;else if(a=='vol')el.volume=Math.max(0,Math.min(1,+v));
   else if(a=='sh')shuf=!shuf;else if(a=='rp')rep=!rep;
   draw();sched();
@@ -195,13 +207,13 @@ const bar=(p,d)=>`<div class=row style="margin:14px 0;flex-wrap:nowrap"><span cl
 
 function pcard(){
   const t=T[cur],pl=cur>=0&&!el.paused,d=isFinite(el.duration)?el.duration:0;
-  return`<div class=c><h2>${t?esc(nm(t.name)):'Nenhuma música tocando'}</h2><p class=s>${t?mb(t.size):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}<label style="margin-top:14px">Volume<input type=range min=0 max=1 step=.01 value=${el.volume} oninput="MU.vol(this.value)"></label></div>`;
+  return`<div class=c><h2>${t?esc(nm(t.name)):'Nenhuma música tocando'}</h2><p class=s>${t?mb(t.size)+(ctx&&pget(ctx)?' · playlist '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}<label style="margin-top:14px">Volume<input type=range min=0 max=1 step=.01 value=${el.volume} oninput="MU.vol(this.value)"></label></div>`;
 }
 function lcard(){
   const pl=cur>=0&&!el.paused;
   return`<div class=c style="grid-column:1/-1"><h2>Biblioteca <label class="b sm" style="float:right;margin:0;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></h2>
 <p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>
-${T.map((x,i)=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pl(${i})"><div style="${i==cur?'color:var(--ac2);font-weight:600':''}">${i==cur&&pl?'🔊 ':''}${esc(nm(x.name))}</div><div class=s>${mb(x.size)}</div></div><button class="b g sm" onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')||'<p class=s>Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>'}</div>`;
+${T.map((x,i)=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pl(${i})"><div style="${i==cur?'color:var(--ac2);font-weight:600':''}">${i==cur&&pl?'🔊 ':''}${esc(nm(x.name))}</div><div class=s>${mb(x.size)}</div></div><button class="b g sm" onclick="MU.pt(${i})" title="Adicionar a uma playlist">＋ Playlist</button><button class="b g sm" onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')||'<p class=s>Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>'}</div>`;
 }
 function rcard(){
   const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
@@ -217,15 +229,56 @@ function dv(){
 <p class=s id=mu-xf style="margin-top:8px">${esc(XF)}</p>
 <p class=s style="margin-top:6px"><b>Sincronizar</b> troca entre os dois as músicas que faltam. <b>Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p></div>`;
 }
-const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():pcard()+lcard())+dv()+'</div>';
+function plcard(){
+  const pl=cur>=0&&!el.paused;
+  return`<div class=c><h2>🎶 Playlists <button class="b sm" style="float:right" onclick="MU.pn()">+ Nova playlist</button></h2>${PL.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=r><div class=f style="cursor:pointer" onclick="MU.po('${p.id}')"><div style="${ctx==p.id?'color:var(--ac2);font-weight:600':''}">${ctx==p.id&&pl?'🔊 ':''}${esc(p.name)}</div><div class=s>${n} ${n==1?'música':'músicas'}</div></div><button class="b g sm" onclick="MU.pplay('${p.id}')" title="Tocar">▶</button><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div>`}).join('')||'<p class=s>Crie uma playlist e adicione músicas da biblioteca.</p>'}</div>`;
+}
+function pdet(){
+  const p=pget(PV);if(!p){PV=null;return plcard()}
+  const pl=cur>=0&&!el.paused,L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
+  return`<div class=c><div class=row><button class="b g sm" onclick="MU.po(null)">‹ Playlists</button><b class=f>${esc(p.name)}</b><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div><p class=s style="margin:8px 0">${L.length} ${L.length==1?'música':'músicas'}</p>${L.length?`<button class=b onclick="MU.pplay('${p.id}')">▶ Tocar playlist</button>`:''}<div style="margin-top:10px">${L.map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pp('${p.id}',${x.i})"><div style="${x.i==cur&&ctx==p.id?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&ctx==p.id&&pl?'🔊 ':''}${esc(nm(T[x.i].name))}</div></div><button class="b g sm" onclick="MU.pr('${p.id}','${x.k}')" aria-label="Tirar da playlist">✕</button></div>`).join('')||'<p class=s>Playlist vazia. Adicione músicas abaixo.</p>'}</div></div>`;
+}
+function padd(){
+  const p=pget(PV),L=T.map((t,i)=>({t,i})).filter(x=>!p.keys.includes(key(x.t)));
+  return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${L.map(x=>`<div class=r><div class=f>${esc(nm(x.t.name))}<div class=s>${mb(x.t.size)}</div></div><button class="b sm" onclick="MU.pa('${p.id}',${x.i})">+ Adicionar</button></div>`).join('')||`<p class=s>${T.length?'Todas as músicas da biblioteca já estão nesta playlist.':'Adicione músicas na biblioteca primeiro.'}</p>`}</div>`;
+}
+const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():pcard()+plcard()+lcard())+dv()+'</div>';
+
+/* ---- ações de playlist ---- */
+function newPL(then){
+  fm('Nova playlist',[{k:'n',l:'Nome da playlist',v:'',r:1}],o=>{
+    const p={id:uid(),name:o.n.trim()||'Playlist',keys:[]};PL.push(p);savePL();
+    then?then(p):draw();
+  });
+}
+function editPL(id){
+  const p=pget(id);if(!p)return;
+  fm('Editar playlist',[{k:'n',l:'Nome da playlist',v:p.name,r:1}],o=>{p.name=o.n.trim()||p.name;savePL();draw()},()=>{
+    if(!confirm('Excluir a playlist "'+p.name+'"? As músicas continuam na biblioteca.'))return;
+    PL=PL.filter(x=>x!=p);if(PV==id)PV=null;if(ctx==id)ctx=null;savePL();draw();
+  });
+}
+function addTo(i){
+  const k=key(T[i]),fin=p=>{if(!p)return;if(!p.keys.includes(k)){p.keys.push(k);savePL()}draw()};
+  if(!PL.length)return newPL(fin);
+  fm('Adicionar à playlist',[{k:'p',l:'Playlist',t:'select',v:PL[0].id,o:[...PL.map(p=>[p.id,p.name]),['__new','➕ Nova playlist…']]}],o=>{o.p=='__new'?newPL(fin):fin(pget(o.p))});
+}
+function playPL(id){
+  const q=qOf(id);if(!q.length)return;
+  play(shuf?q[Math.floor(Math.random()*q.length)]:q[0],1,id);
+}
 
 /* ---- registro na página ---- */
 if(!PG.some(p=>p[0]=='mus'))PG.splice(PG.length-1,0,['mus','🎵','Música']);
 P.mus=view;
-dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];draw();bls()}).catch(()=>{fail=1;draw()});
+dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;draw();bls()}).catch(()=>{fail=1;draw()});
 
 return{
-  add,pl:i=>play(i),rm:del,nx:next,pv:prev,
+  add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
+  pn:()=>newPL(),po(id){PV=id;draw()},pe:editPL,pt:addTo,pplay:playPL,
+  pp:(id,i)=>play(i,1,id),
+  pa(id,i){const p=pget(id);if(!p)return;const k=key(T[i]);if(!p.keys.includes(k)){p.keys.push(k);savePL()}draw()},
+  pr(id,k){const p=pget(id);if(!p)return;p.keys=p.keys.filter(x=>x!=k);savePL();draw()},
   lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;draw();sched()}else if(a=='rp'){rep=!rep;draw();sched()}},
   vol(v){RC?cmd('vol',v):el.volume=+v},
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
