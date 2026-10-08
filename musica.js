@@ -15,7 +15,12 @@ const tx=async(m,f)=>{const d=await dbp;return new Promise((res,rej)=>{const t=d
 const tm=s=>isFinite(s)&&s>0?Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'):'0:00';
 const nm=n=>n.replace(/\.[^/.]+$/,'').replace(/_/g,' ').trim();
 const mb=b=>(b/1048576).toFixed(1).replace('.',',')+' MB';
-const draw=()=>{if(typeof page!='undefined'&&page=='mus')render()};
+const draw=()=>{
+  if(typeof page=='undefined'||page!='mus')return;
+  const a=document.activeElement,id=a&&a.id,ss=a&&a.selectionStart;
+  render();
+  if(id&&id.indexOf('mu-q')==0){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(ss,ss)}catch(e){}}}
+};
 const isAudio=f=>f.type.startsWith('audio/')||/\.(mp3|m4a|ogg|wav|flac|aac|opus)$/i.test(f.name);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const hk=s=>{let h=5381;for(let i=0;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>0;return h.toString(36)+'.'+s.length.toString(36)};
@@ -24,10 +29,15 @@ const setXF=t=>{XF=t;lastX=Date.now();const e=$('#mu-xf');if(e)e.textContent=t};
 const pr=t=>{XF=t;const n=Date.now();if(n-lastX>200){lastX=n;const e=$('#mu-xf');if(e)e.textContent=t}};
 
 /* ---- playlists (só neste aparelho; guardam a chave da música, não o arquivo) ---- */
-let PL=[],PV=null,ctx=null,KM=null;
+let PL=[],PV=null,ctx=null,KM=null,QL='',QA='',QR='';
 try{PL=JSON.parse(localStorage.getItem('hub_playlists'))||[]}catch(e){PL=[]}
 const savePL=()=>{try{localStorage.setItem('hub_playlists',JSON.stringify(PL))}catch(e){}};
-const pget=id=>PL.find(p=>p.id==id);
+PL.forEach(p=>{if(!p.u)p.u=Date.now()});savePL();
+const pls=()=>PL.filter(p=>!p.del);
+const pget=id=>PL.find(p=>p.id==id&&!p.del);
+const touch=p=>{p.u=Date.now();savePL();bpl(p)};
+const mt=(s,q)=>{const n=x=>String(x).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();const t=n(s).replace(/[-–_]+/g,' ');return n(q).split(/\s+/).filter(Boolean).every(w=>t.includes(w))};
+const matches=(name,q)=>mt(nm(name),q);
 const kmap=()=>KM||(KM=new Map(T.map((x,i)=>[key(x),i])));
 const tIdx=k=>{const i=kmap().get(k);return i==null?-1:i};
 const qOf=c=>{const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
@@ -90,7 +100,6 @@ async function add(files){
 async function del(i){
   if(!confirm('Remover "'+nm(T[i].name)+'" deste aparelho?'))return;
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
-  const k=key(T[i]);PL.forEach(p=>{p.keys=p.keys.filter(x=>x!=k)});savePL();
   if(i==cur){el.pause();el.removeAttribute('src');if(url){URL.revokeObjectURL(url);url=null}cur=-1}
   else if(i<cur)cur--;
   T.splice(i,1);KM=null;draw();bls();
@@ -108,6 +117,23 @@ function bcast(){
 function bls(){const m=JSON.stringify(lsNow());openConns().forEach(c=>{try{c.send(m)}catch(e){}})}
 const sched=()=>{clearTimeout(bt);bt=setTimeout(bcast,250)};
 
+/* ---- playlists: sincronização (vale a alteração mais recente de cada playlist) ---- */
+function hello(c){sendJ(c,lsNow());sendJ(c,stNow());PL.forEach(p=>sendJ(c,{t:'mu-pl',p}))}
+function bpl(p){openConns().forEach(c=>sendJ(c,{t:'mu-pl',p}))}
+function mergePL(p){
+  if(!p||!p.id)return false;
+  const l=PL.find(x=>x.id==p.id);
+  if(!l){PL.push({id:p.id,name:p.name||'Playlist',keys:p.keys||[],u:p.u||0,del:p.del?1:0});return true}
+  if((p.u||0)>(l.u||0)){l.name=p.name||l.name;l.keys=p.keys||[];l.del=p.del?1:0;l.u=p.u;return true}
+  return false;
+}
+function onPl(c,p){
+  if(!mergePL(p))return;
+  savePL();if(PV&&!pget(PV))PV=null;
+  openConns().forEach(x=>{if(x!==c)sendJ(x,{t:'mu-pl',p})});
+  draw();
+}
+
 /* ---- recebimento ---- */
 function onData(c,d){
   if(typeof d!='string'){
@@ -123,9 +149,11 @@ function onData(c,d){
   let m;try{m=JSON.parse(d)}catch(e){return}
   if(!m||typeof m.t!='string'||m.t.slice(0,3)!='mu-')return;
   const id=c.hid;
+  if(!c._h){c._h=1;hello(c)}
   if(m.t=='mu-st')onSt(id,m);
   else if(m.t=='mu-ls'){(R[id]=R[id]||{}).names=m.names||[];if(RC==id)draw()}
   else if(m.t=='mu-cmd')exec(m.a,m.v);
+  else if(m.t=='mu-pl')onPl(c,m.p);
   else if(m.t=='mu-man')onMan(c,m);
   else if(m.t=='mu-f'){c._rx=c._rx||{};c._rx[m.tid]={name:m.name,size:m.size,type:m.type,parts:[],got:0,skip:T.some(x=>key(x)==hk(m.name+'|'+m.size))}}
   else if(m.t=='mu-e')endRx(c,m.tid);
@@ -193,7 +221,7 @@ function link(){
   if(!syOk())return;
   try{
     const oc=openConns(),ids=oc.map(c=>c.hid).sort().join(',');
-    oc.forEach(c=>{if(!c._mu){c._mu=1;c.on('data',d=>onData(c,d));sendJ(c,lsNow());sendJ(c,stNow())}});
+    oc.forEach(c=>{if(!c._mu){c._mu=1;c.on('data',d=>onData(c,d));hello(c)}});
     Object.keys(R).forEach(id=>{if(!oc.some(c=>c.hid==id))delete R[id]});
     if(RC&&!oc.some(c=>c.hid==RC))RC=null;
     if(ids!=cs){cs=ids;draw()}
@@ -209,19 +237,35 @@ function pcard(){
   const t=T[cur],pl=cur>=0&&!el.paused,d=isFinite(el.duration)?el.duration:0;
   return`<div class=c><h2>${t?esc(nm(t.name)):'Nenhuma música tocando'}</h2><p class=s>${t?mb(t.size)+(ctx&&pget(ctx)?' · playlist '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}<label style="margin-top:14px">Volume<input type=range min=0 max=1 step=.01 value=${el.volume} oninput="MU.vol(this.value)"></label></div>`;
 }
+const LIM=50,HINT='Digite o nome da música ou do artista para encontrar.';
+const more=n=>n>LIM?`<p class=s>Mostrando ${LIM} de ${n}. Digite mais para refinar.</p>`:'';
+const sbox=(id,v,fn)=>`<input id=${id} type=search placeholder="Buscar por música ou artista…" autocomplete=off value="${esc(v)}" oninput="${fn}(this.value)" style="margin-bottom:8px">`;
+function resLib(){
+  if(!T.length)return'<p class=s>Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>';
+  const q=QL.trim();if(!q)return`<p class=s>${HINT}</p>`;
+  const pl=cur>=0&&!el.paused,r=T.map((t,i)=>({t,i})).filter(x=>matches(x.t.name,q));
+  if(!r.length)return`<p class=s>Nada encontrado para “${esc(q)}”.</p>`;
+  return r.slice(0,LIM).map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pl(${x.i})"><div style="${x.i==cur?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&pl?'🔊 ':''}${esc(nm(x.t.name))}</div><div class=s>${mb(x.t.size)}</div></div><button class="b g sm" onclick="MU.pt(${x.i})" title="Adicionar a uma playlist">＋ Playlist</button><button class="b g sm" onclick="MU.rm(${x.i})" aria-label="Remover">✕</button></div>`).join('')+more(r.length);
+}
 function lcard(){
-  const pl=cur>=0&&!el.paused;
   return`<div class=c style="grid-column:1/-1"><h2>Biblioteca <label class="b sm" style="float:right;margin:0;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></h2>
-<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>
-${T.map((x,i)=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pl(${i})"><div style="${i==cur?'color:var(--ac2);font-weight:600':''}">${i==cur&&pl?'🔊 ':''}${esc(nm(x.name))}</div><div class=s>${mb(x.size)}</div></div><button class="b g sm" onclick="MU.pt(${i})" title="Adicionar a uma playlist">＋ Playlist</button><button class="b g sm" onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')||'<p class=s>Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>'}</div>`;
+<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div></div>`;
 }
 function rcard(){
   const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
   return`<div class=c><h2>🎛 Controlando ${esc(d.icon+' '+d.name)}</h2><p class=s>${s?(s.n?esc(s.n):'Nenhuma música tocando'):'Aguardando o aparelho…'}</p>${s&&s.b?'<p class=s style="color:var(--wa);margin-top:6px">⚠ O navegador do outro aparelho bloqueou o início da música. Toque na tela dele uma vez e tente de novo.</p>':''}${bar(p,s?s.dur:0)}${ctrl('MU.cmd',s&&s.p,s&&s.sh,s&&s.rp)}<label style="margin-top:14px">Volume<input id=mu-v type=range min=0 max=1 step=.01 value=${s?s.v:1} oninput="MU.vol(this.value)"></label><button class="b g" style="margin-top:14px" onclick="MU.back()">🔊 Tocar aqui</button></div>`;
 }
+function resRem(){
+  const r=R[RC]||{},s=r.st,L=r.names||[];
+  if(!L.length)return'<p class=s>Esse aparelho ainda não tem músicas.</p>';
+  const q=QR.trim();if(!q)return`<p class=s>${HINT}</p>`;
+  const f=L.map((x,i)=>({x,i})).filter(o=>mt(o.x,q));
+  if(!f.length)return`<p class=s>Nada encontrado para “${esc(q)}”.</p>`;
+  return f.slice(0,LIM).map(o=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.cmd('pl',${o.i})"><div style="${s&&o.i==s.i?'color:var(--ac2);font-weight:600':''}">${s&&o.i==s.i&&s.p?'🔊 ':''}${esc(o.x)}</div></div></div>`).join('')+more(f.length);
+}
 function rlcard(){
-  const d=dev(RC),r=R[RC]||{},s=r.st,L=r.names||[];
-  return`<div class=c style="grid-column:1/-1"><h2>Biblioteca de ${esc(d.icon+' '+d.name)}</h2>${L.map((x,i)=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.cmd('pl',${i})"><div style="${s&&i==s.i?'color:var(--ac2);font-weight:600':''}">${s&&i==s.i&&s.p?'🔊 ':''}${esc(x)}</div></div></div>`).join('')||'<p class=s>Esse aparelho ainda não tem músicas.</p>'}</div>`;
+  const d=dev(RC);
+  return`<div class=c style="grid-column:1/-1"><h2>Biblioteca de ${esc(d.icon+' '+d.name)}</h2>${sbox('mu-qr',QR,'MU.qr')}<div id=mu-resr>${resRem()}</div></div>`;
 }
 function dv(){
   const oc=openConns();
@@ -231,37 +275,44 @@ function dv(){
 }
 function plcard(){
   const pl=cur>=0&&!el.paused;
-  return`<div class=c><h2>🎶 Playlists <button class="b sm" style="float:right" onclick="MU.pn()">+ Nova playlist</button></h2>${PL.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=r><div class=f style="cursor:pointer" onclick="MU.po('${p.id}')"><div style="${ctx==p.id?'color:var(--ac2);font-weight:600':''}">${ctx==p.id&&pl?'🔊 ':''}${esc(p.name)}</div><div class=s>${n} ${n==1?'música':'músicas'}</div></div><button class="b g sm" onclick="MU.pplay('${p.id}')" title="Tocar">▶</button><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div>`}).join('')||'<p class=s>Crie uma playlist e adicione músicas da biblioteca.</p>'}</div>`;
+  return`<div class=c><h2>🎶 Playlists <button class="b sm" style="float:right" onclick="MU.pn()">+ Nova playlist</button></h2>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=r><div class=f style="cursor:pointer" onclick="MU.po('${p.id}')"><div style="${ctx==p.id?'color:var(--ac2);font-weight:600':''}">${ctx==p.id&&pl?'🔊 ':''}${esc(p.name)}</div><div class=s>${n} ${n==1?'música':'músicas'}</div></div><button class="b g sm" onclick="MU.pplay('${p.id}')" title="Tocar">▶</button><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div>`}).join('')||'<p class=s>Crie uma playlist e adicione músicas da biblioteca.</p>'}</div>`;
 }
 function pdet(){
   const p=pget(PV);if(!p){PV=null;return plcard()}
   const pl=cur>=0&&!el.paused,L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
-  return`<div class=c><div class=row><button class="b g sm" onclick="MU.po(null)">‹ Playlists</button><b class=f>${esc(p.name)}</b><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div><p class=s style="margin:8px 0">${L.length} ${L.length==1?'música':'músicas'}</p>${L.length?`<button class=b onclick="MU.pplay('${p.id}')">▶ Tocar playlist</button>`:''}<div style="margin-top:10px">${L.map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pp('${p.id}',${x.i})"><div style="${x.i==cur&&ctx==p.id?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&ctx==p.id&&pl?'🔊 ':''}${esc(nm(T[x.i].name))}</div></div><button class="b g sm" onclick="MU.pr('${p.id}','${x.k}')" aria-label="Tirar da playlist">✕</button></div>`).join('')||'<p class=s>Playlist vazia. Adicione músicas abaixo.</p>'}</div></div>`;
+  return`<div class=c><div class=row><button class="b g sm" onclick="MU.po(null)">‹ Playlists</button><b class=f>${esc(p.name)}</b><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div><p class=s style="margin:8px 0">${L.length} ${L.length==1?'música':'músicas'}</p>${L.length?`<button class=b onclick="MU.pplay('${p.id}')">▶ Tocar playlist</button>`:''}<div style="margin-top:10px">${L.map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pp('${p.id}',${x.i})"><div style="${x.i==cur&&ctx==p.id?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&ctx==p.id&&pl?'🔊 ':''}${esc(nm(T[x.i].name))}</div></div><button class="b g sm" onclick="MU.pr('${p.id}','${x.k}')" aria-label="Tirar da playlist">✕</button></div>`).join('')||'<p class=s>Playlist vazia. Busque e adicione músicas abaixo.</p>'}</div></div>`;
+}
+function resAdd(){
+  const p=pget(PV);if(!p)return'';
+  if(!T.length)return'<p class=s>Adicione músicas na biblioteca primeiro.</p>';
+  const q=QA.trim();if(!q)return`<p class=s>${HINT}</p>`;
+  const r=T.map((t,i)=>({t,i})).filter(x=>!p.keys.includes(key(x.t))&&matches(x.t.name,q));
+  if(!r.length)return`<p class=s>Nada encontrado para “${esc(q)}” (ou já está na playlist).</p>`;
+  return r.slice(0,LIM).map(x=>`<div class=r><div class=f>${esc(nm(x.t.name))}<div class=s>${mb(x.t.size)}</div></div><button class="b sm" onclick="MU.pa('${p.id}',${x.i})">+ Adicionar</button></div>`).join('')+more(r.length);
 }
 function padd(){
-  const p=pget(PV),L=T.map((t,i)=>({t,i})).filter(x=>!p.keys.includes(key(x.t)));
-  return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${L.map(x=>`<div class=r><div class=f>${esc(nm(x.t.name))}<div class=s>${mb(x.t.size)}</div></div><button class="b sm" onclick="MU.pa('${p.id}',${x.i})">+ Adicionar</button></div>`).join('')||`<p class=s>${T.length?'Todas as músicas da biblioteca já estão nesta playlist.':'Adicione músicas na biblioteca primeiro.'}</p>`}</div>`;
+  return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div></div>`;
 }
 const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():pcard()+plcard()+lcard())+dv()+'</div>';
 
 /* ---- ações de playlist ---- */
 function newPL(then){
   fm('Nova playlist',[{k:'n',l:'Nome da playlist',v:'',r:1}],o=>{
-    const p={id:uid(),name:o.n.trim()||'Playlist',keys:[]};PL.push(p);savePL();
+    const p={id:uid(),name:o.n.trim()||'Playlist',keys:[],u:0};PL.push(p);touch(p);
     then?then(p):draw();
   });
 }
 function editPL(id){
   const p=pget(id);if(!p)return;
-  fm('Editar playlist',[{k:'n',l:'Nome da playlist',v:p.name,r:1}],o=>{p.name=o.n.trim()||p.name;savePL();draw()},()=>{
+  fm('Editar playlist',[{k:'n',l:'Nome da playlist',v:p.name,r:1}],o=>{p.name=o.n.trim()||p.name;touch(p);draw()},()=>{
     if(!confirm('Excluir a playlist "'+p.name+'"? As músicas continuam na biblioteca.'))return;
-    PL=PL.filter(x=>x!=p);if(PV==id)PV=null;if(ctx==id)ctx=null;savePL();draw();
+    p.del=1;p.keys=[];if(PV==id)PV=null;if(ctx==id)ctx=null;touch(p);draw();
   });
 }
 function addTo(i){
-  const k=key(T[i]),fin=p=>{if(!p)return;if(!p.keys.includes(k)){p.keys.push(k);savePL()}draw()};
-  if(!PL.length)return newPL(fin);
-  fm('Adicionar à playlist',[{k:'p',l:'Playlist',t:'select',v:PL[0].id,o:[...PL.map(p=>[p.id,p.name]),['__new','➕ Nova playlist…']]}],o=>{o.p=='__new'?newPL(fin):fin(pget(o.p))});
+  const k=key(T[i]),L=pls(),fin=p=>{if(!p)return;if(!p.keys.includes(k)){p.keys.push(k);touch(p)}draw()};
+  if(!L.length)return newPL(fin);
+  fm('Adicionar à playlist',[{k:'p',l:'Playlist',t:'select',v:L[0].id,o:[...L.map(p=>[p.id,p.name]),['__new','➕ Nova playlist…']]}],o=>{o.p=='__new'?newPL(fin):fin(pget(o.p))});
 }
 function playPL(id){
   const q=qOf(id);if(!q.length)return;
@@ -277,8 +328,11 @@ return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
   pn:()=>newPL(),po(id){PV=id;draw()},pe:editPL,pt:addTo,pplay:playPL,
   pp:(id,i)=>play(i,1,id),
-  pa(id,i){const p=pget(id);if(!p)return;const k=key(T[i]);if(!p.keys.includes(k)){p.keys.push(k);savePL()}draw()},
-  pr(id,k){const p=pget(id);if(!p)return;p.keys=p.keys.filter(x=>x!=k);savePL();draw()},
+  pa(id,i){const p=pget(id);if(!p)return;const k=key(T[i]);if(!p.keys.includes(k)){p.keys.push(k);touch(p)}draw()},
+  pr(id,k){const p=pget(id);if(!p)return;p.keys=p.keys.filter(x=>x!=k);touch(p);draw()},
+  q(v){QL=v;const e=$('#mu-res');if(e)e.innerHTML=resLib()},
+  qa(v){QA=v;const e=$('#mu-resa');if(e)e.innerHTML=resAdd()},
+  qr(v){QR=v;const e=$('#mu-resr');if(e)e.innerHTML=resRem()},
   lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;draw();sched()}else if(a=='rp'){rep=!rep;draw();sched()}},
   vol(v){RC?cmd('vol',v):el.volume=+v},
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
