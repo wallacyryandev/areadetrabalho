@@ -9,7 +9,7 @@
    - Cartão do Chrome/Android mostra "Hub Pessoal" no lugar da URL (Media Session completa). */
 const MU=(()=>{
 const el=new Audio();el.preload='metadata';
-let T=[],cur=-1,shuf=0,rep=0,url=null,seeking=0,fail=0,blocked=0;
+let T=[],cur=-1,shuf=0,rep=1,url=null,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[];
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0;
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
@@ -74,18 +74,28 @@ const sendJ=(c,o)=>{try{c.send(JSON.stringify(o))}catch(e){}};
 
 /* ---- reprodução local ---- */
 const playEl=()=>el.play().catch(e=>{if(e&&e.name=='NotAllowedError'){blocked=1;bcast()}});
-function play(i,auto=1,c){
+function play(i,auto=1,c,back){
   if(i<0||i>=T.length)return;
-  if(c!==undefined)ctx=c;
+  if(c!==undefined){if(c!==ctx)seen.clear();ctx=c}
+  if(!back&&cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
+  seen.add(key(T[i]));
   cur=i;if(url)URL.revokeObjectURL(url);
   url=URL.createObjectURL(T[i].blob);el.src=url;
   msMeta(i);
   if(auto)playEl();
   draw();
 }
-const nextI=d=>{const q=qOf(ctx);if(!q.length)return -1;if(shuf&&q.length>1){let n;do{n=q[Math.floor(Math.random()*q.length)]}while(n==cur);return n}const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length]};
+const nextI=d=>{
+  const q=qOf(ctx);if(!q.length)return -1;
+  if(shuf&&q.length>1){
+    let c=q.filter(i=>i!=cur&&!seen.has(key(T[i])));
+    if(!c.length){seen.clear();if(cur>=0&&T[cur])seen.add(key(T[cur]));c=q.filter(i=>i!=cur)}
+    return c[Math.floor(Math.random()*c.length)];
+  }
+  const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length];
+};
 const next=()=>{const n=nextI(1);if(n>=0)play(n)};
-const prev=()=>{if(el.currentTime>3)el.currentTime=0;else{const n=nextI(-1);if(n>=0)play(n)}};
+const prev=()=>{if(el.currentTime>3)el.currentTime=0;else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
 function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pause()}
 
 /* ---- só um aparelho toca por vez ---- */
@@ -140,7 +150,7 @@ async function del(i){
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
   if(i==cur){el.pause();el.removeAttribute('src');if(url){URL.revokeObjectURL(url);url=null}cur=-1}
   else if(i<cur)cur--;
-  T.splice(i,1);KM=null;draw();bls();
+  T.splice(i,1);KM=null;hist=[];draw();bls();
 }
 
 /* ---- estado enviado aos outros aparelhos (controle remoto) ---- */
@@ -239,7 +249,7 @@ async function sendFiles(c,list){
 function exec(a,v){
   if(a=='tg')toggle();else if(a=='ps')el.pause();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v,1,null);
   else if(a=='sk')el.currentTime=+v;else if(a=='vol')el.volume=Math.max(0,Math.min(1,+v));
-  else if(a=='sh')shuf=!shuf;else if(a=='rp')rep=!rep;
+  else if(a=='sh'){shuf=!shuf;seen.clear()}else if(a=='rp')rep=!rep;
   draw();sched();
 }
 function onSt(id,m){
@@ -317,7 +327,11 @@ function resLib(){
 }
 function lcard(){
   return`<div class=c style="grid-column:1/-1"><h2>Biblioteca <label class="b sm" style="float:right;margin:0;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></h2>
-<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div></div>`;
+<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length?'':resLib()}</div>`;
+}
+function scard(){
+  if(!T.length)return'';
+  return`<div class=c style="grid-column:1/-1">${sbox('mu-q',QL,'MU.q')}<div id=mu-res>${resLib()}</div></div>`;
 }
 function rcard(){
   const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
@@ -361,7 +375,7 @@ function resAdd(){
 function padd(){
   return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div></div>`;
 }
-const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():ban()+pcard()+plcard()+lcard())+dv()+'</div>';
+const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():scard()+ban()+pcard()+plcard()+lcard())+dv()+'</div>';
 
 /* ---- ações de playlist ---- */
 function newPL(then){
@@ -401,7 +415,7 @@ return{
   q(v){QL=v;const e=$('#mu-res');if(e)e.innerHTML=resLib()},
   qa(v){QA=v;const e=$('#mu-resa');if(e)e.innerHTML=resAdd()},
   qr(v){QR=v;const e=$('#mu-resr');if(e)e.innerHTML=resRem()},
-  lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;draw();sched()}else if(a=='rp'){rep=!rep;draw();sched()}},
+  lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;seen.clear();draw();sched()}else if(a=='rp'){rep=!rep;draw();sched()}},
   vol(v){RC?cmd('vol',v):el.volume=+v},
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
   cmd,
