@@ -32,7 +32,7 @@ label{display:block;margin-bottom:10px;font-size:13px;color:var(--t2)}.bar{heigh
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,9),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const D=d=>{d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')},TD=()=>D(),add=(d,n)=>{d=new Date(d);d.setDate(d.getDate()+n);return d};
 let S;try{S=JSON.parse(localStorage.getItem('hub'))}catch(e){}
-const DEF=()=>({name:'',theme:'dark',rest:90,cats:['Estudos','Pessoal','Saúde'],tasks:[],events:[],subjects:[],sessions:[],qs:[],plans:[],workouts:[],habits:[],projects:[],notes:[],timer:{acc:0,start:null,sel:''},active:null});S=Object.assign(DEF(),S||{});
+const DEF=()=>({name:'',theme:'dark',rest:90,cats:['Estudos','Pessoal','Saúde'],tasks:[],events:[],subjects:[],sessions:[],qs:[],plans:[],workouts:[],habits:[],projects:[],notes:[],runs:[],use:{},timer:{acc:0,start:null,sel:''},active:null});S=Object.assign(DEF(),S||{});
 const sv=()=>{SY.chk();try{localStorage.setItem('hub',JSON.stringify(S))}catch(e){}},RD=()=>{sv();render()};
 const sum=(a,k)=>a.reduce((x,y)=>x+(y[k]||0),0),fd=s=>Math.floor(s/3600)+'h '+String(Math.floor(s%3600/60)).padStart(2,'0')+'min',pc=(a,n)=>n?(a/n*100).toFixed(1).replace('.',',').replace(',0','')+'%':'—',mmss=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
 const PG=[['home','🏠','Início'],['est','📚','Estudos'],['gym','🏋️','Academia'],['tar','✅','Tarefas'],['age','📅','Agenda'],['hab','🎯','Hábitos'],['pro','🚀','Projetos'],['not','📝','Notas'],['sta','📊','Estatísticas'],['cfg','⚙️','Configurações']];

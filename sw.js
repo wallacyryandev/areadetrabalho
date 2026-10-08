@@ -1,6 +1,6 @@
 /* Hub Pessoal - sw.js: abre sem internet (cache) + notificações do sistema no Android/Chrome */
-const CACHE='hub-v2';
-const FILES=['./','index.html','index.js','musica.js','extras.js','manifest.json','icon-192.png','icon-512.png','icon-180.png','icon-maskable-512.png'];
+const CACHE='hub-v3';
+const FILES=['./','index.html','index.js','musica.js','extras.js','corrida.js','manifest.json','icon-192.png','icon-512.png','icon-180.png','icon-maskable-512.png'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();

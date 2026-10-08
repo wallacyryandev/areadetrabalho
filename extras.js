@@ -1,14 +1,17 @@
 /* Hub Pessoal - extras.js
    1) Cotação do dólar (card na página Início, com conversor)
-   2) Tempo de uso do app (cards na página Estatísticas)
+   2) Tempo de uso do app, somando os aparelhos (cards na página Estatísticas)
    Carregar DEPOIS de musica.js e ANTES do script que chama SY.init(). */
 (()=>{
 
-/* ================= TEMPO DE USO ================= */
-/* Conta o tempo com o Hub visível na tela. Fica salvo só neste aparelho. */
-const UK='hub_use';
+/* ================= TEMPO DE USO (somando todos os aparelhos) ================= */
+/* Cada aparelho conta o PRÓPRIO tempo (só ele escreve na sua entrada) e todos
+   guardam as entradas dos outros. Assim o total soma os aparelhos sem um apagar o do outro. */
+const UK='hub_use',OK='hub_use_o';
 let U;try{U=JSON.parse(localStorage.getItem(UK))}catch(e){}
 U=U&&typeof U=='object'?U:{};U.t=+U.t||0;U.d=U.d&&typeof U.d=='object'?U.d:{};U.s=U.s||TD();
+let O={};try{O=JSON.parse(localStorage.getItem(OK))||{}}catch(e){O={}}   /* entradas dos outros aparelhos */
+const myId=()=>{try{return SY._c().id}catch(e){return null}};
 const saveU=()=>{try{localStorage.setItem(UK,JSON.stringify(U))}catch(e){}};
 let last=Date.now();
 const count=force=>{
@@ -18,23 +21,52 @@ const count=force=>{
 };
 setInterval(()=>count(),1000);
 setInterval(saveU,15000);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){count(1);saveU()}else last=Date.now()});
-addEventListener('pagehide',()=>{count(1);saveU()});
 saveU();
 
+/* grava a minha entrada em S.use (o Hub sincroniza S.use com os outros aparelhos) */
+function pushUse(){
+  const id=myId();if(!id)return;
+  const lim=D(add(new Date(),-400)),d={};
+  for(const k in U.d)if(k>=lim)d[k]=Math.round(U.d[k]);
+  const nu={...O,[id]:{t:Math.round(U.t),s:U.s,d}};
+  if(JSON.stringify(nu)===JSON.stringify(S.use))return;
+  S.use=nu;sv();
+}
+/* chegou S.use de outro aparelho: guarda localmente as entradas dos outros */
+function pullUse(){
+  const id=myId();let ch=0;
+  for(const k in (S.use||{})){
+    if(k===id)continue;
+    const e=S.use[k];if(!e||typeof e.t!='number')continue;
+    if(!O[k]||e.t>O[k].t){O[k]=e;ch=1}
+  }
+  if(ch)try{localStorage.setItem(OK,JSON.stringify(O))}catch(e){}
+}
+setInterval(()=>{pullUse()},5000);
+setInterval(()=>{pullUse();pushUse()},20000);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){count(1);saveU();pullUse();pushUse()}else last=Date.now()});
+addEventListener('pagehide',()=>{count(1);saveU();pushUse()});
+
+const ents=()=>[{id:myId(),t:U.t,d:U.d,s:U.s,me:1},...Object.entries(O).map(([id,e])=>({id,t:e.t||0,d:e.d||{},s:e.s}))];
+const dayS=d=>ents().reduce((a,e)=>a+(e.d[d]||0),0);
+const totS=()=>ents().reduce((a,e)=>a+(e.t||0),0);
+
 function useCard(){
-  const t=TD(),days=[6,5,4,3,2,1,0].map(i=>D(add(new Date(),-i))),
-    w=days.reduce((a,d)=>a+(U.d[d]||0),0),
-    m=Object.keys(U.d).filter(k=>k.startsWith(t.slice(0,7))).reduce((a,k)=>a+U.d[k],0),
-    k=(a,b)=>`<div class=r><span class=f>${a}</span><b>${b}</b></div>`;
-  return`<div class=c><h2>⏱ Tempo no app</h2>${k('Hoje',`<span id=uh>${fd(U.d[t]||0)}</span>`)}${k('Últimos 7 dias',fd(w))}${k('Este mês',fd(m))}${k('Total',`<span id=ua>${fd(U.t)}</span>`)}<p class=s style="margin-top:8px">Conta o tempo com o Hub aberto na tela, só neste aparelho, desde ${U.s.split('-').reverse().join('/')}.</p></div>
-<div class=c><h2>Horas no app (7 dias)</h2>${chart(days.map(d=>+((U.d[d]||0)/3600).toFixed(1)),days.map(d=>d.slice(8)))}</div>`;
+  const t=TD(),E=ents(),days=[6,5,4,3,2,1,0].map(i=>D(add(new Date(),-i))),
+    w=days.reduce((a,d)=>a+dayS(d),0),
+    m=E.reduce((a,e)=>a+Object.keys(e.d).filter(k=>k.startsWith(t.slice(0,7))).reduce((x,k)=>x+e.d[k],0),0),
+    since=E.map(e=>e.s).filter(Boolean).sort()[0]||t,
+    k=(a,b)=>`<div class=r><span class=f>${a}</span><b>${b}</b></div>`,
+    C=(()=>{try{return SY._c()}catch(e){return{links:[]}}})(),
+    dev=E.length>1?`<div style="margin-top:8px">${E.map(e=>{const l=e.me?C:(C.links.find(x=>x.id==e.id)||{icon:'📱',name:'Outro aparelho'});return k(esc((l.icon||'')+' '+(l.name||''))+(e.me?' <span class=s>· este</span>':''),fd(e.t))}).join('')}</div>`:'';
+  return`<div class=c><h2>⏱ Tempo no app</h2>${k('Hoje',`<span id=uh>${fd(dayS(t))}</span>`)}${k('Últimos 7 dias',fd(w))}${k('Este mês',fd(m))}${k('Total',`<span id=ua>${fd(totS())}</span>`)}${dev}<p class=s style="margin-top:8px">Soma de todos os aparelhos conectados. Conta o tempo com o Hub aberto na tela, desde ${since.split('-').reverse().join('/')}.</p></div>
+<div class=c><h2>Horas no app (7 dias)</h2>${chart(days.map(d=>+(dayS(d)/3600).toFixed(1)),days.map(d=>d.slice(8)))}</div>`;
 }
 /* atualiza os números ao vivo enquanto a página Estatísticas está aberta */
 setInterval(()=>{
   const a=document.getElementById('uh'),b=document.getElementById('ua');
-  if(a)a.textContent=fd(U.d[TD()]||0);
-  if(b)b.textContent=fd(U.t);
+  if(a)a.textContent=fd(dayS(TD()));
+  if(b)b.textContent=fd(totS());
 },1000);
 
 /* ================= DÓLAR ================= */

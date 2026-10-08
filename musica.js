@@ -8,8 +8,12 @@
    - "Tocar aqui": traz a música e a posição do outro aparelho para este.
    - Cartão do Chrome/Android mostra "Hub Pessoal" no lugar da URL (Media Session completa). */
 const MU=(()=>{
-const el=new Audio();el.preload='metadata';
-let T=[],cur=-1,shuf=0,rep=1,url=null,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
+/* Dois players: enquanto um toca, o outro já deixa a PRÓXIMA música carregada.
+   Quando falta ~0,3 s, o próximo começa sem o som parar. Assim a troca de música
+   não depende do app estar "acordado" (tela apagada / sem internet). */
+const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
+let el=els[0],pre=null,lk=0,lr=null;
+let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0;
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
@@ -79,8 +83,8 @@ function play(i,auto=1,c,back){
   if(c!==undefined){if(c!==ctx)seen.clear();ctx=c}
   if(!back&&cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
   seen.add(key(T[i]));
-  cur=i;if(url)URL.revokeObjectURL(url);
-  url=URL.createObjectURL(T[i].blob);el.src=url;
+  cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});
+  setSrc(el,T[i].blob);
   msMeta(i);
   if(auto)playEl();
   draw();
@@ -98,6 +102,39 @@ const next=()=>{const n=nextI(1);if(n>=0)play(n)};
 const prev=()=>{if(el.currentTime>3)el.currentTime=0;else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
 function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pause()}
 
+/* ---- troca de música sem pausa ---- */
+function killEl(a){try{a.pause()}catch(e){}a.removeAttribute('src');try{a.load()}catch(e){}if(a._u){URL.revokeObjectURL(a._u);a._u=null}}
+function setSrc(a,blob){if(a._u)URL.revokeObjectURL(a._u);a._u=URL.createObjectURL(blob);a.src=a._u}
+function dropPre(){if(pre){killEl(pre.a);pre=null}}
+/* qual música vem depois (mesma regra do fim da faixa) */
+const peek=()=>{const q=qOf(ctx);if(!q.length)return -1;const p=q.indexOf(cur);if(!shuf&&p>=q.length-1&&!rep)return -1;return nextI(1)};
+function prep(){
+  if(pre||cur<0||RC)return;
+  const i=peek();if(i<0||i>=T.length)return;
+  const a=els[0]===el?els[1]:els[0];
+  setSrc(a,T[i].blob);a.preload='auto';a.volume=el.volume;
+  pre={i,a};
+}
+function handoff(){
+  if(!pre)return false;
+  const{i,a}=pre;pre=null;
+  if(cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
+  seen.add(key(T[i]));
+  cur=i;el=a;            /* o novo vira o ativo ANTES de tocar; o antigo termina sozinho */
+  msMeta(i);playEl();draw();
+  return true;
+}
+/* Enquanto toca, segura um "Web Lock": o Chrome não congela uma página que tem lock. */
+function keep(on){
+  if(!navigator.locks)return;
+  try{
+    if(on){if(lk)return;lk=1;navigator.locks.request('hub-keepalive',()=>new Promise(r=>{if(!lk)return r();lr=r})).catch(()=>{lk=0;lr=null})}
+    else{lk=0;if(lr){lr();lr=null}}
+  }catch(e){lk=0;lr=null}
+}
+/* eventos só do player ativo; o que terminou de tocar a ponta é limpo */
+const on=(ev,fn)=>els.forEach(a=>a.addEventListener(ev,e=>{if(a===el)fn(e);else if(ev=='ended')killEl(a)}));
+
 /* ---- só um aparelho toca por vez ---- */
 /* Ao começar a tocar, aviso os outros. Quem estiver tocando pausa sozinho.
    Não depende do relógio dos aparelhos: se os dois começaram quase juntos (<1,5 s),
@@ -111,19 +148,22 @@ function onAct(c){
   say('⏸ Agora tocando em '+d.icon+' '+d.name);
 }
 
-el.addEventListener('play',()=>{blocked=0;myPlayAt=Date.now();act();draw();bcast()});
-el.addEventListener('pause',()=>{draw();bcast()});
-el.addEventListener('loadedmetadata',()=>{draw();bcast()});
-el.addEventListener('volumechange',()=>sched());
-el.addEventListener('timeupdate',()=>{
+on('play',()=>{blocked=0;myPlayAt=Date.now();act();keep(1);draw();bcast()});
+on('pause',()=>{keep(0);draw();bcast()});
+on('loadedmetadata',()=>{draw();bcast()});
+on('volumechange',()=>sched());
+on('timeupdate',()=>{
+  const rem=el.duration-el.currentTime;
+  if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
   if(!RC){const s=$('#mu-s'),c=$('#mu-c');if(s&&!seeking)s.value=el.currentTime;if(c&&!seeking)c.textContent=tm(el.currentTime)}
   if(Date.now()-lastB>1000)bcast();
 });
-el.addEventListener('ended',()=>{
+on('ended',()=>{
+  if(pre){handoff();return}
   const q=qOf(ctx),p=q.indexOf(cur);
   if(shuf||p<q.length-1)next();
   else if(rep&&q.length)play(q[0]);
-  else{draw();bcast()}
+  else{keep(0);draw();bcast()}
 });
 if('mediaSession' in navigator){
   const ms=navigator.mediaSession,h=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
@@ -148,7 +188,7 @@ async function add(files){
 async function del(i){
   if(!confirm('Remover "'+nm(T[i].name)+'" deste aparelho?'))return;
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
-  if(i==cur){el.pause();el.removeAttribute('src');if(url){URL.revokeObjectURL(url);url=null}cur=-1}
+  dropPre();if(i==cur){killEl(el);cur=-1}
   else if(i<cur)cur--;
   T.splice(i,1);KM=null;hist=[];draw();bls();
 }
@@ -249,7 +289,7 @@ async function sendFiles(c,list){
 function exec(a,v){
   if(a=='tg')toggle();else if(a=='ps')el.pause();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v,1,null);
   else if(a=='sk')el.currentTime=+v;else if(a=='vol')el.volume=Math.max(0,Math.min(1,+v));
-  else if(a=='sh'){shuf=!shuf;seen.clear()}else if(a=='rp')rep=!rep;
+  else if(a=='sh'){shuf=!shuf;seen.clear();dropPre()}else if(a=='rp'){rep=!rep;dropPre()}
   draw();sched();
 }
 function onSt(id,m){
@@ -317,7 +357,7 @@ async function rmExact(){
   if(!confirm('Remover '+L.length+' cópia(s) idêntica(s) (mesmo nome e tamanho)? Fica uma de cada.'))return;
   const gone=new Set(),ct=cur>=0?T[cur]:null;
   for(const i of L){try{await tx('readwrite',s=>s.delete(T[i].id));gone.add(i)}catch(e){}}
-  T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];
+  T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];dropPre();
   if(ct){const k=key(ct);cur=T.indexOf(ct);if(cur<0)cur=T.findIndex(x=>key(x)==k)}
   draw();bls();
 }
@@ -444,7 +484,7 @@ return{
   q(v){QL=v;const e=$('#mu-res');if(e)e.innerHTML=resLib()},
   qa(v){QA=v;const e=$('#mu-resa');if(e)e.innerHTML=resAdd()},
   qr(v){QR=v;const e=$('#mu-resr');if(e)e.innerHTML=resRem()},
-  lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;seen.clear();draw();sched()}else if(a=='rp'){rep=!rep;draw();sched()}},
+  lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;seen.clear();dropPre();draw();sched()}else if(a=='rp'){rep=!rep;dropPre();draw();sched()}},
   vol(v){RC?cmd('vol',v):el.volume=+v},
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
   cmd,

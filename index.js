@@ -14,7 +14,7 @@
 
 /* ===== CONECTAR DISPOSITIVOS (sincronização P2P por código) ===== */
 const SY=(()=>{
-const SYK=['name','rest','cats','tasks','events','subjects','sessions','qs','plans','workouts','habits','projects','notes','timer','active'];
+const SYK=['name','rest','cats','tasks','events','subjects','sessions','qs','plans','workouts','habits','projects','notes','timer','active','runs','use'];
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',PP='hubpair-',DP='hubd-',DEF0=DEF(),DJ={},LJ={};
 const ua=navigator.userAgent,tablet=/iPad|Tablet/i.test(ua)||(/Android/i.test(ua)&&!/Mobile/i.test(ua))||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1),mobile=/iPhone|iPod|Android|Mobile/i.test(ua);
 const rnd=(n,al)=>{const a=new Uint8Array(n);crypto.getRandomValues(a);return[...a].map(x=>al[x%al.length]).join('')};
