@@ -144,6 +144,7 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 document.addEventListener('keydown',e=>{if($('#md').className=='on')return;const ty=/INPUT|TEXTAREA|SELECT/.test(e.target.tagName);if(FO)fh();if(e.key=='Escape'&&FO)fx();else if(e.code=='Space'&&FO&&!ty){e.preventDefault();document.activeElement&&document.activeElement.blur();A.t1()}else if((e.key=='f'||e.key=='F')&&!ty&&!e.ctrlKey&&!e.metaKey&&(FO||page=='est')){FO?fx():fs()}});
 </script>
 <script src="index.js"></script>
+<script src="musica.js"></script>
 <script>
 SY.init();
 setInterval(tick,250);render();if(!S.name){fm('Seu nome',[{k:'n',l:'Como devo te chamar?',r:1}],o=>{S.name=o.n;RD()});$('#md .row').insertAdjacentHTML('afterbegin','<button type=button class="b g" onclick="SY.joinUI()">🔗 Já uso em outro dispositivo</button>')}
