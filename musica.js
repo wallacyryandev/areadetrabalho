@@ -1,11 +1,21 @@
 /* Hub Pessoal - musica.js
    Página "Música": player com as músicas salvas no próprio aparelho (IndexedDB),
    + troca de músicas entre aparelhos conectados e controle remoto (estilo Spotify Connect).
-   Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js. */
+   Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js.
+
+   NOVO nesta versão:
+   - Só um aparelho toca por vez: ao dar play em um, os outros conectados pausam sozinhos.
+   - "Tocar aqui": traz a música e a posição do outro aparelho para este.
+   - Cartão do Chrome/Android mostra "Hub Pessoal" no lugar da URL (Media Session completa). */
 const MU=(()=>{
 const el=new Audio();el.preload='metadata';
 let T=[],cur=-1,shuf=0,rep=0,url=null,seeking=0,fail=0,blocked=0;
-let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='';
+let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0;
+
+/* ---- identidade do app no cartão de mídia do sistema ---- */
+const APP='Hub Pessoal';
+const ico=f=>{try{return new URL(f,location.href).href}catch(e){return f}};
+const ART=[{src:ico('icon-192.png'),sizes:'192x192',type:'image/png'},{src:ico('icon-512.png'),sizes:'512x512',type:'image/png'}];
 
 /* ---- armazenamento local (IndexedDB) ---- */
 const dbp=new Promise((res,rej)=>{try{const r=indexedDB.open('hub-musicas',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}});
@@ -27,6 +37,20 @@ const hk=s=>{let h=5381;for(let i=0;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>
 const key=x=>hk(x.name+'|'+x.size),man=()=>T.map(key);
 const setXF=t=>{XF=t;lastX=Date.now();const e=$('#mu-xf');if(e)e.textContent=t};
 const pr=t=>{XF=t;const n=Date.now();if(n-lastX>200){lastX=n;const e=$('#mu-xf');if(e)e.textContent=t}};
+const say=m=>{try{typeof toast=='function'&&toast(m)}catch(e){}};
+
+/* ---- Media Session (cartão do Chrome / tela de bloqueio) ---- */
+const msMeta=i=>{
+  if(!('mediaSession' in navigator))return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({title:nm(T[i].name),artist:APP,album:APP,artwork:ART})}catch(e){}
+};
+const msPos=()=>{
+  if(!('mediaSession' in navigator))return;
+  try{
+    navigator.mediaSession.playbackState=cur<0?'none':el.paused?'paused':'playing';
+    if(isFinite(el.duration)&&el.duration>0)navigator.mediaSession.setPositionState({duration:el.duration,playbackRate:el.playbackRate||1,position:Math.min(el.currentTime||0,el.duration)});
+  }catch(e){}
+};
 
 /* ---- playlists (só neste aparelho; guardam a chave da música, não o arquivo) ---- */
 let PL=[],PV=null,ctx=null,KM=null,QL='',QA='',QR='';
@@ -55,7 +79,7 @@ function play(i,auto=1,c){
   if(c!==undefined)ctx=c;
   cur=i;if(url)URL.revokeObjectURL(url);
   url=URL.createObjectURL(T[i].blob);el.src=url;
-  if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:nm(T[i].name)});
+  msMeta(i);
   if(auto)playEl();
   draw();
 }
@@ -64,7 +88,20 @@ const next=()=>{const n=nextI(1);if(n>=0)play(n)};
 const prev=()=>{if(el.currentTime>3)el.currentTime=0;else{const n=nextI(-1);if(n>=0)play(n)}};
 function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pause()}
 
-el.addEventListener('play',()=>{blocked=0;draw();bcast()});
+/* ---- só um aparelho toca por vez ---- */
+/* Ao começar a tocar, aviso os outros. Quem estiver tocando pausa sozinho.
+   Não depende do relógio dos aparelhos: se os dois começaram quase juntos (<1,5 s),
+   desempata pelo id; senão, quem chegou depois assume. */
+function act(){const m=JSON.stringify({t:'mu-act'});openConns().forEach(c=>{try{c.send(m)}catch(e){}})}
+function onAct(c){
+  if(cur<0||el.paused)return;
+  if(Date.now()-myPlayAt<1500&&syOk()&&SY._c().id<c.hid)return;
+  el.pause();
+  const d=dev(c.hid);
+  say('⏸ Agora tocando em '+d.icon+' '+d.name);
+}
+
+el.addEventListener('play',()=>{blocked=0;myPlayAt=Date.now();act();draw();bcast()});
 el.addEventListener('pause',()=>{draw();bcast()});
 el.addEventListener('loadedmetadata',()=>{draw();bcast()});
 el.addEventListener('volumechange',()=>sched());
@@ -79,11 +116,12 @@ el.addEventListener('ended',()=>{
   else{draw();bcast()}
 });
 if('mediaSession' in navigator){
-  const ms=navigator.mediaSession;
-  ms.setActionHandler('play',()=>playEl());
-  ms.setActionHandler('pause',()=>el.pause());
-  ms.setActionHandler('nexttrack',next);
-  ms.setActionHandler('previoustrack',prev);
+  const ms=navigator.mediaSession,h=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
+  h('play',()=>playEl());
+  h('pause',()=>el.pause());
+  h('nexttrack',next);
+  h('previoustrack',prev);
+  h('seekto',d=>{if(d&&d.seekTime!=null){el.currentTime=d.seekTime;msPos()}});
 }
 
 /* ---- biblioteca local ---- */
@@ -110,6 +148,7 @@ const stNow=()=>({t:'mu-st',p:cur>=0&&!el.paused?1:0,i:cur,n:cur>=0&&T[cur]?nm(T
 const lsNow=()=>({t:'mu-ls',names:T.slice(0,150).map(x=>nm(x.name).slice(0,50))});
 function bcast(){
   lastB=Date.now();
+  msPos();
   const oc=openConns();if(!oc.length)return;
   const m=JSON.stringify(stNow());
   oc.forEach(c=>{try{c.send(m)}catch(e){}});
@@ -151,6 +190,7 @@ function onData(c,d){
   const id=c.hid;
   if(!c._h){c._h=1;hello(c)}
   if(m.t=='mu-st')onSt(id,m);
+  else if(m.t=='mu-act')onAct(c);
   else if(m.t=='mu-ls'){(R[id]=R[id]||{}).names=m.names||[];if(RC==id)draw()}
   else if(m.t=='mu-cmd')exec(m.a,m.v);
   else if(m.t=='mu-pl')onPl(c,m.p);
@@ -206,6 +246,7 @@ function onSt(id,m){
   const r=R[id]=R[id]||{},sg=[m.p,m.i,m.n,m.sh,m.rp,m.b,Math.round(m.dur)].join('|'),ch=r.sg!=sg;
   r.sg=sg;r.st=m;r.at=Date.now();
   if(RC==id&&!seeking){ch?draw():rtick()}
+  else if(ch)draw();
 }
 const rpos=r=>Math.min(r.st.dur||1e9,r.st.pos+(r.st.p?(Date.now()-r.at)/1000:0));
 function rtick(){
@@ -215,6 +256,28 @@ function rtick(){
 }
 setInterval(()=>{if(RC&&typeof page!='undefined'&&page=='mus')rtick()},500);
 function cmd(a,v){const c=openConns().find(x=>x.hid==RC);if(c)sendJ(c,{t:'mu-cmd',a,v})}
+
+/* ---- transferir a reprodução de outro aparelho para este ("Tocar aqui") ---- */
+const away=()=>{
+  for(const id in R){const r=R[id];
+    if(r.st&&r.st.p&&Date.now()-r.at<15000&&openConns().some(c=>c.hid==id))return id}
+  return null;
+};
+function take(id){
+  const r=R[id],s=r&&r.st,c=openConns().find(x=>x.hid==id);
+  if(s&&s.n){
+    const i=T.findIndex(x=>nm(x.name)==s.n);
+    if(i<0){const m='Essa música não está neste aparelho. Use "Sincronizar músicas" primeiro.';setXF(m);say(m);return}
+    const p=rpos(r);
+    if(c)sendJ(c,{t:'mu-cmd',a:'ps'});
+    RC=null;
+    play(i,1,null);
+    el.addEventListener('loadedmetadata',()=>{try{el.currentTime=p}catch(e){}},{once:true});
+    return;
+  }
+  if(c)sendJ(c,{t:'mu-cmd',a:'ps'});
+  RC=null;draw();
+}
 
 /* ---- novos aparelhos conectados / desconectados ---- */
 function link(){
@@ -233,6 +296,11 @@ setInterval(link,1000);
 const ctrl=(l,pl,sh,rp)=>`<div class=row><button class="b ${sh?'':'g'} sm" onclick="${l}('sh')" title="Aleatório">🔀</button><button class="b g" onclick="${l}('pv')" title="Anterior">⏮</button><button class=b onclick="${l}('tg')">${pl?'⏸ Pausar':'▶ Tocar'}</button><button class="b g" onclick="${l}('nx')" title="Próxima">⏭</button><button class="b ${rp?'':'g'} sm" onclick="${l}('rp')" title="Repetir lista">🔁</button></div>`;
 const bar=(p,d)=>`<div class=row style="margin:14px 0;flex-wrap:nowrap"><span class=s id=mu-c style="min-width:38px">${tm(p)}</span><input id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} style="flex:1;width:auto" aria-label="Posição" oninput="MU.sk(this.value,1)" onchange="MU.sk(this.value)"><span class=s style="min-width:38px;text-align:right">${tm(d)}</span></div>`;
 
+function ban(){
+  const id=away();if(!id||(cur>=0&&!el.paused))return'';
+  const d=dev(id),s=R[id].st;
+  return`<div class=c style="grid-column:1/-1;border-color:var(--ac)"><h2>🔊 Tocando em ${esc(d.icon+' '+d.name)}</h2><p class=s>${esc(s.n||'')}</p><div class=row style="margin-top:8px"><button class=b onclick="MU.take('${id}')">Tocar aqui</button><button class="b g" onclick="MU.ctl('${id}')">🎛 Controlar</button></div></div>`;
+}
 function pcard(){
   const t=T[cur],pl=cur>=0&&!el.paused,d=isFinite(el.duration)?el.duration:0;
   return`<div class=c><h2>${t?esc(nm(t.name)):'Nenhuma música tocando'}</h2><p class=s>${t?mb(t.size)+(ctx&&pget(ctx)?' · playlist '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}<label style="margin-top:14px">Volume<input type=range min=0 max=1 step=.01 value=${el.volume} oninput="MU.vol(this.value)"></label></div>`;
@@ -271,7 +339,7 @@ function dv(){
   const oc=openConns();
   return`<div class=c style="grid-column:1/-1"><h2>📲 Aparelhos</h2>${oc.length?oc.map(c=>{const d=dev(c.hid);return`<div class=r><div class=f>${esc(d.icon+' '+d.name)}<div class=s>${c.hid==RC?'controlando agora':'conectado'}</div></div><button class="b g sm" onclick="MU.sy('${c.hid}')">⇄ Sincronizar músicas</button>${c.hid==RC?'':`<button class="b sm" onclick="MU.ctl('${c.hid}')">🎛 Controlar</button>`}</div>`}).join(''):'<p class=s>Nenhum aparelho conectado. Conecte outro em Configurações → Dispositivos.</p><button class="b g sm" style="margin-top:8px" onclick="go(\'cfg\')">Ir para Configurações</button>'}
 <p class=s id=mu-xf style="margin-top:8px">${esc(XF)}</p>
-<p class=s style="margin-top:6px"><b>Sincronizar</b> troca entre os dois as músicas que faltam. <b>Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p></div>`;
+<p class=s style="margin-top:6px">Só um aparelho toca por vez: ao dar play em um, os outros pausam sozinhos. <b>Sincronizar</b> troca entre os dois as músicas que faltam. <b>Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p></div>`;
 }
 function plcard(){
   const pl=cur>=0&&!el.paused;
@@ -293,7 +361,7 @@ function resAdd(){
 function padd(){
   return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div></div>`;
 }
-const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():pcard()+plcard()+lcard())+dv()+'</div>';
+const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():ban()+pcard()+plcard()+lcard())+dv()+'</div>';
 
 /* ---- ações de playlist ---- */
 function newPL(then){
@@ -338,7 +406,8 @@ return{
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
   cmd,
   ctl(id){RC=id;el.pause();draw()},
-  back(){cmd('ps');RC=null;draw()},
+  take,
+  back(){take(RC)},
   sy(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
 };
 })();
