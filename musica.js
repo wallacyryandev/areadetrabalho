@@ -3,18 +3,18 @@
    + troca de músicas entre aparelhos conectados e controle remoto (estilo Spotify Connect).
    Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js.
 
-   NOVO nesta versão:
-   - Só um aparelho toca por vez: ao dar play em um, os outros conectados pausam sozinhos.
-   - "Tocar aqui": traz a música e a posição do outro aparelho para este.
-   - Cartão do Chrome/Android mostra "Hub Pessoal" no lugar da URL (Media Session completa). */
+   NOVO nesta versão (visual estilo Spotify):
+   - Tema escuro com verde, abas no topo: Início · Músicas · Playlists · Aparelhos.
+   - Início: "Tocando agora" com capa grande + grade de playlists.
+   - Músicas: busca no topo e a lista já aparece sem precisar digitar.
+   - Mini player fixo embaixo nas outras abas.
+   - Capas coloridas geradas a partir do nome da música/playlist.
+   - A lógica (reprodução sem pausa, sincronizar, controle remoto, "só um toca por vez") continua igual. */
 const MU=(()=>{
-/* Dois players: enquanto um toca, o outro já deixa a PRÓXIMA música carregada.
-   Quando falta ~0,3 s, o próximo começa sem o som parar. Assim a troca de música
-   não depende do app estar "acordado" (tela apagada / sem internet). */
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
 let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
-let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0;
+let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home';
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
 const APP='Hub Pessoal';
@@ -42,6 +42,8 @@ const key=x=>hk(x.name+'|'+x.size),man=()=>T.map(key);
 const setXF=t=>{XF=t;lastX=Date.now();const e=$('#mu-xf');if(e)e.textContent=t};
 const pr=t=>{XF=t;const n=Date.now();if(n-lastX>200){lastX=n;const e=$('#mu-xf');if(e)e.textContent=t}};
 const say=m=>{try{typeof toast=='function'&&toast(m)}catch(e){}};
+/* capa colorida gerada pelo nome (cada música/playlist tem a sua cor) */
+const cov=s=>{const h=parseInt(hk(String(s)),36)%360;return'background:linear-gradient(135deg,hsl('+h+',55%,42%),hsl('+((h+45)%360)+',55%,22%))'};
 
 /* ---- Media Session (cartão do Chrome / tela de bloqueio) ---- */
 const msMeta=i=>{
@@ -106,7 +108,6 @@ function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pau
 function killEl(a){try{a.pause()}catch(e){}a.removeAttribute('src');try{a.load()}catch(e){}if(a._u){URL.revokeObjectURL(a._u);a._u=null}}
 function setSrc(a,blob){if(a._u)URL.revokeObjectURL(a._u);a._u=URL.createObjectURL(blob);a.src=a._u}
 function dropPre(){if(pre){killEl(pre.a);pre=null}}
-/* qual música vem depois (mesma regra do fim da faixa) */
 const peek=()=>{const q=qOf(ctx);if(!q.length)return -1;const p=q.indexOf(cur);if(!shuf&&p>=q.length-1&&!rep)return -1;return nextI(1)};
 function prep(){
   if(pre||cur<0||RC)return;
@@ -120,11 +121,10 @@ function handoff(){
   const{i,a}=pre;pre=null;
   if(cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
   seen.add(key(T[i]));
-  cur=i;el=a;            /* o novo vira o ativo ANTES de tocar; o antigo termina sozinho */
+  cur=i;el=a;
   msMeta(i);playEl();draw();
   return true;
 }
-/* Enquanto toca, segura um "Web Lock": o Chrome não congela uma página que tem lock. */
 function keep(on){
   if(!navigator.locks)return;
   try{
@@ -132,13 +132,9 @@ function keep(on){
     else{lk=0;if(lr){lr();lr=null}}
   }catch(e){lk=0;lr=null}
 }
-/* eventos só do player ativo; o que terminou de tocar a ponta é limpo */
 const on=(ev,fn)=>els.forEach(a=>a.addEventListener(ev,e=>{if(a===el)fn(e);else if(ev=='ended')killEl(a)}));
 
 /* ---- só um aparelho toca por vez ---- */
-/* Ao começar a tocar, aviso os outros. Quem estiver tocando pausa sozinho.
-   Não depende do relógio dos aparelhos: se os dois começaram quase juntos (<1,5 s),
-   desempata pelo id; senão, quem chegou depois assume. */
 function act(){const m=JSON.stringify({t:'mu-act'});openConns().forEach(c=>{try{c.send(m)}catch(e){}})}
 function onAct(c){
   if(cur<0||el.paused)return;
@@ -155,6 +151,7 @@ on('volumechange',()=>sched());
 on('timeupdate',()=>{
   const rem=el.duration-el.currentTime;
   if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
+  const mp=$('#mu-mp');if(mp&&el.duration>0)mp.style.width=(el.currentTime/el.duration*100)+'%';
   if(!RC){const s=$('#mu-s'),c=$('#mu-c');if(s&&!seeking)s.value=el.currentTime;if(c&&!seeking)c.textContent=tm(el.currentTime)}
   if(Date.now()-lastB>1000)bcast();
 });
@@ -315,6 +312,7 @@ const away=()=>{
 };
 function take(id){
   const r=R[id],s=r&&r.st,c=openConns().find(x=>x.hid==id);
+  TAB='home';
   if(s&&s.n){
     const i=T.findIndex(x=>nm(x.name)==s.n);
     if(i<0){const m='Essa música não está neste aparelho. Use "Sincronizar músicas" primeiro.';setXF(m);say(m);return}
@@ -343,7 +341,6 @@ function link(){
 setInterval(link,1000);
 
 /* ---- músicas repetidas ---- */
-/* Agrupa pelo nome "limpo" (sem extensão, acento, maiúscula, "(1)", "cópia"). */
 const nn=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\.[^/.]+$/,'').replace(/\s*[\(\[]?\b(copy|copia)\b[\)\]]?/g,'').replace(/\s*\(\d+\)\s*$/,'').replace(/[^a-z0-9]+/g,' ').trim();
 function dups(){
   const g=new Map();
@@ -364,87 +361,176 @@ async function rmExact(){
 function dcard(){
   const G=dups(),sk=new Set();let ex=0;
   T.forEach(t=>{const k=key(t);sk.has(k)?ex++:sk.add(k)});
-  return`<div class=c style="grid-column:1/-1"><div class=row><h2 class=f style="margin:0">🔍 Músicas repetidas</h2><button class="b g sm" onclick="MU.dp()">✕ Fechar</button></div>
-<p class=s style="margin:8px 0">${G.length?G.length+(G.length==1?' grupo':' grupos')+' com nome igual. 🟠 idêntica = mesmo nome e mesmo tamanho. 🔵 parecida = mesmo nome, tamanho diferente (pode ser outra qualidade).':'Nenhuma música repetida encontrada. 🎉'}</p>
-${ex?`<button class=b onclick="MU.rx()">🧹 Remover ${ex} ${ex==1?'cópia idêntica':'cópias idênticas'}</button>`:''}
-${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k]||0)+1});return`<div style="margin-top:14px"><div class=s><b>${esc(nm(T[a[0]].name))}</b></div>${a.map(i=>`<div class=r><div class=f><div>${esc(T[i].name)}</div><div class=s>${mb(T[i].size)} · ${kc[key(T[i])]>1?'🟠 idêntica':'🔵 parecida'}</div></div><button class="b g sm" onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')}</div>`}).join('')}
-${G.length>100?`<p class=s style="margin-top:10px">Mostrando 100 de ${G.length} grupos. Remova alguns para ver o resto.</p>`:''}</div>`;
+  return`<div class=sp-card><div class=sp-row><b class=sp-i style="font-size:17px">🔍 Músicas repetidas</b><button class="sp-btn g sm" onclick="MU.dp()">Fechar</button></div>
+<p class=sp-s style="margin:8px 0">${G.length?G.length+(G.length==1?' grupo':' grupos')+' com nome igual. 🟠 idêntica = mesmo nome e tamanho. 🔵 parecida = mesmo nome, tamanho diferente (pode ser outra qualidade).':'Nenhuma música repetida encontrada. 🎉'}</p>
+${ex?`<button class=sp-btn onclick="MU.rx()">🧹 Remover ${ex} ${ex==1?'cópia idêntica':'cópias idênticas'}</button>`:''}
+${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k]||0)+1});return`<div style="margin-top:14px"><div class=sp-s><b style="color:#fff">${esc(nm(T[a[0]].name))}</b></div>${a.map(i=>`<div class=sp-r><div class=sp-i><div class=sp-n>${esc(T[i].name)}</div><div class=sp-s>${mb(T[i].size)} · ${kc[key(T[i])]>1?'🟠 idêntica':'🔵 parecida'}</div></div><button class=sp-ib onclick="MU.rm(${i})" aria-label="Remover">✕</button></div>`).join('')}</div>`}).join('')}
+${G.length>100?`<p class=sp-s style="margin-top:10px">Mostrando 100 de ${G.length} grupos. Remova alguns para ver o resto.</p>`:''}</div>`;
 }
 
+/* ---- estilo (tema escuro estilo Spotify) ---- */
+const CSS=`<style>
+.sp{background:#121212;color:#fff;border-radius:16px;padding:16px 14px 14px;min-height:60vh}
+.sp *{box-sizing:border-box}
+.sp-t{font-size:26px;font-weight:800;margin:2px 0 12px}
+.sp-tabs{display:flex;gap:8px;overflow-x:auto;margin-bottom:16px;padding-bottom:2px}
+.sp-chip{background:#2a2a2a;color:#fff;border:0;border-radius:999px;padding:8px 16px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.sp-chip.on{background:#1db954;color:#000}
+.sp-h{font-size:20px;font-weight:700;margin:22px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sp-card{background:#181818;border-radius:12px;padding:14px;margin-bottom:14px}
+.sp-s{color:#b3b3b3;font-size:13px;margin:0}
+.sp-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sp-r{display:flex;align-items:center;gap:12px;padding:6px 8px;border-radius:8px}
+.sp-r:hover{background:#2a2a2a}
+.sp-r.on .sp-n{color:#1db954}
+.sp-cv{width:46px;height:46px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none;cursor:pointer}
+.sp-i{flex:1;min-width:0;cursor:pointer}
+.sp-n{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-ib{background:none;border:0;color:#b3b3b3;font:inherit;font-size:20px;cursor:pointer;padding:6px 9px;border-radius:50%;line-height:1}
+.sp-ib:hover{color:#fff}
+.sp-ib.on{color:#1db954}
+.sp-pp{width:58px;height:58px;border-radius:50%;background:#1db954;color:#000;border:0;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+.sp-pp:hover{background:#1ed760;transform:scale(1.05)}
+.sp-pp.sm{width:40px;height:40px;font-size:16px}
+.sp-btn{background:#1db954;color:#000;border:0;border-radius:999px;padding:10px 18px;font:inherit;font-size:14px;font-weight:700;cursor:pointer;display:inline-block}
+.sp-btn:hover{background:#1ed760}
+.sp-btn.g{background:transparent;color:#fff;box-shadow:inset 0 0 0 1px #727272}
+.sp-btn.g:hover{box-shadow:inset 0 0 0 1px #fff;background:transparent}
+.sp-btn.sm{padding:7px 13px;font-size:13px}
+.sp-np{text-align:center}
+.sp-art{width:min(260px,70%);aspect-ratio:1;margin:6px auto 16px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:72px;box-shadow:0 12px 32px #0008}
+.sp-ti{font-size:22px;font-weight:800;overflow-wrap:anywhere}
+.sp-bar{display:flex;align-items:center;gap:8px;margin:14px 0 8px}
+.sp-bar input,.sp-vol input{flex:1;width:auto;accent-color:#1db954}
+.sp-bar span{min-width:38px;font-size:12px;color:#b3b3b3}
+.sp-ctl{display:flex;align-items:center;justify-content:center;gap:8px}
+.sp-ctl .sp-ib{font-size:24px}
+.sp-vol{display:flex;align-items:center;gap:8px;margin-top:16px;color:#b3b3b3}
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.sp-pc{background:#181818;border-radius:10px;padding:12px;cursor:pointer}
+.sp-pc:hover{background:#282828}
+.sp-pc .sp-cv{width:100%;height:auto;aspect-ratio:1;font-size:40px;margin-bottom:10px}
+.sp-q{width:100%;background:#2a2a2a;border:0;border-radius:999px;color:#fff;padding:11px 18px;font:inherit;font-size:15px;margin-bottom:10px;outline:0}
+.sp-q:focus{box-shadow:0 0 0 2px #1db954}
+.sp-mini{position:sticky;bottom:8px;margin-top:16px;background:#282828;border-radius:10px;padding:8px 10px 12px;display:flex;align-items:center;gap:6px;box-shadow:0 6px 20px #000a}
+.sp-prog{position:absolute;left:10px;right:10px;bottom:4px;height:3px;border-radius:2px;background:#555;overflow:hidden}
+.sp-prog i{display:block;height:100%;background:#1db954}
+.sp-warn{color:#f5a623;font-size:13px;margin-top:8px}
+</style>`;
+
 /* ---- telas ---- */
-const ctrl=(l,pl,sh,rp)=>`<div class=row><button class="b ${sh?'':'g'} sm" onclick="${l}('sh')" title="Aleatório">🔀</button><button class="b g" onclick="${l}('pv')" title="Anterior">⏮</button><button class=b onclick="${l}('tg')">${pl?'⏸ Pausar':'▶ Tocar'}</button><button class="b g" onclick="${l}('nx')" title="Próxima">⏭</button><button class="b ${rp?'':'g'} sm" onclick="${l}('rp')" title="Repetir lista">🔁</button></div>`;
-const bar=(p,d)=>`<div class=row style="margin:14px 0;flex-wrap:nowrap"><span class=s id=mu-c style="min-width:38px">${tm(p)}</span><input id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} style="flex:1;width:auto" aria-label="Posição" oninput="MU.sk(this.value,1)" onchange="MU.sk(this.value)"><span class=s style="min-width:38px;text-align:right">${tm(d)}</span></div>`;
+const ctrl=(l,pl,sh,rp)=>`<div class=sp-ctl><button class="sp-ib ${sh?'on':''}" onclick="${l}('sh')" title="Aleatório">🔀</button><button class=sp-ib onclick="${l}('pv')" title="Anterior">⏮</button><button class=sp-pp onclick="${l}('tg')" title="${pl?'Pausar':'Tocar'}">${pl?'⏸':'▶'}</button><button class=sp-ib onclick="${l}('nx')" title="Próxima">⏭</button><button class="sp-ib ${rp?'on':''}" onclick="${l}('rp')" title="Repetir lista">🔁</button></div>`;
+const bar=(p,d)=>`<div class=sp-bar><span id=mu-c>${tm(p)}</span><input id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} aria-label="Posição" oninput="MU.sk(this.value,1)" onchange="MU.sk(this.value)"><span style="text-align:right">${tm(d)}</span></div>`;
+const vol=(id,v)=>`<label class=sp-vol>🔈<input ${id?'id='+id:''} type=range min=0 max=1 step=.01 value=${v} aria-label="Volume" oninput="MU.vol(this.value)">🔊</label>`;
 
 function ban(){
   const id=away();if(!id||(cur>=0&&!el.paused))return'';
   const d=dev(id),s=R[id].st;
-  return`<div class=c style="grid-column:1/-1;border-color:var(--ac)"><h2>🔊 Tocando em ${esc(d.icon+' '+d.name)}</h2><p class=s>${esc(s.n||'')}</p><div class=row style="margin-top:8px"><button class=b onclick="MU.take('${id}')">Tocar aqui</button><button class="b g" onclick="MU.ctl('${id}')">🎛 Controlar</button></div></div>`;
+  return`<div class=sp-card style="box-shadow:inset 0 0 0 1px #1db954"><div class=sp-ti style="font-size:17px">🔊 Tocando em ${esc(d.icon+' '+d.name)}</div><p class=sp-s style="margin-top:4px">${esc(s.n||'')}</p><div class=sp-row style="margin-top:12px"><button class=sp-btn onclick="MU.take('${id}')">Tocar aqui</button><button class="sp-btn g" onclick="MU.ctl('${id}')">🎛 Controlar</button></div></div>`;
 }
+/* Tocando agora (aba Início) */
 function pcard(){
   const t=T[cur],pl=cur>=0&&!el.paused,d=isFinite(el.duration)?el.duration:0;
-  return`<div class=c><h2>${t?esc(nm(t.name)):'Nenhuma música tocando'}</h2><p class=s>${t?mb(t.size)+(ctx&&pget(ctx)?' · playlist '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}<label style="margin-top:14px">Volume<input type=range min=0 max=1 step=.01 value=${el.volume} oninput="MU.vol(this.value)"></label></div>`;
+  return`<div class="sp-card sp-np"><div class=sp-art style="${t?cov(t.name):'background:#2a2a2a'}">${t?'🎵':'🎧'}</div><div class=sp-ti>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s style="margin-top:4px">${t?esc(APP)+(ctx&&pget(ctx)?' · '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('',el.volume)}</div>`;
 }
-const LIM=50,HINT='Digite o nome da música ou do artista para encontrar.';
-const more=n=>n>LIM?`<p class=s>Mostrando ${LIM} de ${n}. Digite mais para refinar.</p>`:'';
-const sbox=(id,v,fn)=>`<input id=${id} type=search placeholder="Buscar por música ou artista…" autocomplete=off value="${esc(v)}" oninput="${fn}(this.value)" style="margin-bottom:8px">`;
+/* Mini player (outras abas) */
+function mini(){
+  if(cur<0||!T[cur]||TAB=='home'||RC)return'';
+  const pl=!el.paused,w=el.duration>0?el.currentTime/el.duration*100:0;
+  return`<div class=sp-mini><div class=sp-cv style="${cov(T[cur].name)}" onclick="MU.tab('home')">🎵</div><div class=sp-i onclick="MU.tab('home')"><div class=sp-n>${esc(nm(T[cur].name))}</div><p class=sp-s>${esc(APP)}</p></div><button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">⏮</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?'⏸':'▶'}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">⏭</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+}
+const tabs=()=>`<div class=sp-tabs>${[['home','Início'],['lib','Músicas'],['pls','Playlists'],['dev','Aparelhos']].map(a=>`<button class="sp-chip${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')">${a[1]}</button>`).join('')}</div>`;
+
+const LIM=50;
+const more=n=>n>LIM?`<p class=sp-s style="margin:8px 8px 0">Mostrando ${LIM} de ${n}. Digite para refinar.</p>`:'';
+const sbox=(id,v,fn)=>`<input class=sp-q id=${id} type=search placeholder="O que você quer ouvir?" autocomplete=off value="${esc(v)}" oninput="${fn}(this.value)">`;
+const none=q=>`<p class=sp-s style="padding:8px">Nada encontrado para “${esc(q)}”.</p>`;
+
+/* Início: grade de playlists */
+function plgrid(){
+  const L=pls();
+  if(!L.length)return`<div class=sp-h>Suas playlists</div><div class=sp-card><p class=sp-s>Crie sua primeira playlist com as músicas da biblioteca.</p><button class=sp-btn style="margin-top:10px" onclick="MU.pn()">+ Nova playlist</button></div>`;
+  return`<div class=sp-h>Suas playlists<button class="sp-btn g sm" onclick="MU.pn()">+ Nova</button></div><div class=sp-grid>${L.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=sp-pc onclick="MU.po('${p.id}')"><div class=sp-cv style="${cov(p.name)}">🎶</div><div class=sp-row style="flex-wrap:nowrap"><div class=sp-i><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="event.stopPropagation();MU.pplay('${p.id}')" aria-label="Tocar playlist">▶</button></div></div>`}).join('')}</div>`;
+}
+function home(){
+  return ban()+pcard()+(T.length?'':`<div class=sp-card><p class=sp-s>Sua biblioteca está vazia.</p><label class=sp-btn style="margin-top:10px;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>`)+plgrid();
+}
+
+/* Músicas (biblioteca) */
 function resLib(){
-  if(!T.length)return'<p class=s>Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>';
-  const q=QL.trim();if(!q)return`<p class=s>${HINT}</p>`;
-  const pl=cur>=0&&!el.paused,r=T.map((t,i)=>({t,i})).filter(x=>matches(x.t.name,q));
-  if(!r.length)return`<p class=s>Nada encontrado para “${esc(q)}”.</p>`;
-  return r.slice(0,LIM).map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pl(${x.i})"><div style="${x.i==cur?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&pl?'🔊 ':''}${esc(nm(x.t.name))}</div><div class=s>${mb(x.t.size)}</div></div><button class="b g sm" onclick="MU.pt(${x.i})" title="Adicionar a uma playlist">＋ Playlist</button><button class="b g sm" onclick="MU.rm(${x.i})" aria-label="Remover">✕</button></div>`).join('')+more(r.length);
+  if(!T.length)return'<p class=sp-s style="padding:8px">Nenhuma música ainda. Use “Adicionar músicas” e escolha os arquivos do aparelho.</p>';
+  const q=QL.trim(),pl=cur>=0&&!el.paused,r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
+  if(!r.length)return none(q);
+  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${cov(x.t.name)}" onclick="MU.pl(${x.i})">${x.i==cur&&pl?'🔊':'🎵'}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">＋</button><button class=sp-ib onclick="MU.rm(${x.i})" aria-label="Remover">✕</button></div>`).join('')+more(r.length);
 }
 function lcard(){
-  return`<div class=c style="grid-column:1/-1"><h2>Biblioteca <label class="b sm" style="float:right;margin:0;cursor:pointer">+ Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></h2>
-<p class=s style="margin-bottom:8px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>${T.length>1?(n=>`<button class="b g sm" style="margin-bottom:8px" onclick="MU.dp()">🔍 Ver músicas repetidas${n?' ('+n+')':''}</button>`)(dups().length):''}${T.length?'':resLib()}</div>`;
+  const n=dups().length;
+  return`<div class=sp-h style="margin-top:0">Suas músicas<label class="sp-btn sm" style="cursor:pointer">+ Adicionar<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>
+<p class=sp-s style="margin-bottom:10px">${fail?'⚠ O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>
+${T.length>1?`<button class="sp-btn g sm" style="margin-bottom:12px" onclick="MU.dp()">🔍 Ver músicas repetidas${n?' ('+n+')':''}</button>`:''}
+${DUP?dcard():''}
+${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div>`;
 }
-function scard(){
-  if(!T.length)return'';
-  return`<div class=c style="grid-column:1/-1">${sbox('mu-q',QL,'MU.q')}<div id=mu-res>${resLib()}</div></div>`;
-}
-function rcard(){
-  const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
-  return`<div class=c><h2>🎛 Controlando ${esc(d.icon+' '+d.name)}</h2><p class=s>${s?(s.n?esc(s.n):'Nenhuma música tocando'):'Aguardando o aparelho…'}</p>${s&&s.b?'<p class=s style="color:var(--wa);margin-top:6px">⚠ O navegador do outro aparelho bloqueou o início da música. Toque na tela dele uma vez e tente de novo.</p>':''}${bar(p,s?s.dur:0)}${ctrl('MU.cmd',s&&s.p,s&&s.sh,s&&s.rp)}<label style="margin-top:14px">Volume<input id=mu-v type=range min=0 max=1 step=.01 value=${s?s.v:1} oninput="MU.vol(this.value)"></label><button class="b g" style="margin-top:14px" onclick="MU.back()">🔊 Tocar aqui</button></div>`;
-}
-function resRem(){
-  const r=R[RC]||{},s=r.st,L=r.names||[];
-  if(!L.length)return'<p class=s>Esse aparelho ainda não tem músicas.</p>';
-  const q=QR.trim();if(!q)return`<p class=s>${HINT}</p>`;
-  const f=L.map((x,i)=>({x,i})).filter(o=>mt(o.x,q));
-  if(!f.length)return`<p class=s>Nada encontrado para “${esc(q)}”.</p>`;
-  return f.slice(0,LIM).map(o=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.cmd('pl',${o.i})"><div style="${s&&o.i==s.i?'color:var(--ac2);font-weight:600':''}">${s&&o.i==s.i&&s.p?'🔊 ':''}${esc(o.x)}</div></div></div>`).join('')+more(f.length);
-}
-function rlcard(){
-  const d=dev(RC);
-  return`<div class=c style="grid-column:1/-1"><h2>Biblioteca de ${esc(d.icon+' '+d.name)}</h2>${sbox('mu-qr',QR,'MU.qr')}<div id=mu-resr>${resRem()}</div></div>`;
-}
-function dv(){
-  const oc=openConns();
-  return`<div class=c style="grid-column:1/-1"><h2>📲 Aparelhos</h2>${oc.length?oc.map(c=>{const d=dev(c.hid);return`<div class=r><div class=f>${esc(d.icon+' '+d.name)}<div class=s>${c.hid==RC?'controlando agora':'conectado'}</div></div><button class="b g sm" onclick="MU.sy('${c.hid}')">⇄ Sincronizar músicas</button>${c.hid==RC?'':`<button class="b sm" onclick="MU.ctl('${c.hid}')">🎛 Controlar</button>`}</div>`}).join(''):'<p class=s>Nenhum aparelho conectado. Conecte outro em Configurações → Dispositivos.</p><button class="b g sm" style="margin-top:8px" onclick="go(\'cfg\')">Ir para Configurações</button>'}
-<p class=s id=mu-xf style="margin-top:8px">${esc(XF)}</p>
-<p class=s style="margin-top:6px">Só um aparelho toca por vez: ao dar play em um, os outros pausam sozinhos. <b>Sincronizar</b> troca entre os dois as músicas que faltam. <b>Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p></div>`;
-}
+
+/* Playlists */
 function plcard(){
   const pl=cur>=0&&!el.paused;
-  return`<div class=c><h2>🎶 Playlists <button class="b sm" style="float:right" onclick="MU.pn()">+ Nova playlist</button></h2>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=r><div class=f style="cursor:pointer" onclick="MU.po('${p.id}')"><div style="${ctx==p.id?'color:var(--ac2);font-weight:600':''}">${ctx==p.id&&pl?'🔊 ':''}${esc(p.name)}</div><div class=s>${n} ${n==1?'música':'músicas'}</div></div><button class="b g sm" onclick="MU.pplay('${p.id}')" title="Tocar">▶</button><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div>`}).join('')||'<p class=s>Crie uma playlist e adicione músicas da biblioteca.</p>'}</div>`;
+  return`<div class=sp-h style="margin-top:0">Playlists<button class="sp-btn sm" onclick="MU.pn()">+ Nova playlist</button></div>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class="sp-r${ctx==p.id?' on':''}"><div class=sp-cv style="${cov(p.name)}" onclick="MU.po('${p.id}')">${ctx==p.id&&pl?'🔊':'🎶'}</div><div class=sp-i onclick="MU.po('${p.id}')"><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="MU.pplay('${p.id}')" title="Tocar" aria-label="Tocar">▶</button><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">✎</button></div>`}).join('')||'<p class=sp-s style="padding:8px">Crie uma playlist e adicione músicas da biblioteca.</p>'}`;
 }
 function pdet(){
   const p=pget(PV);if(!p){PV=null;return plcard()}
   const pl=cur>=0&&!el.paused,L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
-  return`<div class=c><div class=row><button class="b g sm" onclick="MU.po(null)">‹ Playlists</button><b class=f>${esc(p.name)}</b><button class="b g sm" onclick="MU.pe('${p.id}')" title="Editar">✎</button></div><p class=s style="margin:8px 0">${L.length} ${L.length==1?'música':'músicas'}</p>${L.length?`<button class=b onclick="MU.pplay('${p.id}')">▶ Tocar playlist</button>`:''}<div style="margin-top:10px">${L.map(x=>`<div class=r><div class=f style="cursor:pointer" onclick="MU.pp('${p.id}',${x.i})"><div style="${x.i==cur&&ctx==p.id?'color:var(--ac2);font-weight:600':''}">${x.i==cur&&ctx==p.id&&pl?'🔊 ':''}${esc(nm(T[x.i].name))}</div></div><button class="b g sm" onclick="MU.pr('${p.id}','${x.k}')" aria-label="Tirar da playlist">✕</button></div>`).join('')||'<p class=s>Playlist vazia. Busque e adicione músicas abaixo.</p>'}</div></div>`;
+  return`<div class=sp-card><div class=sp-row><button class="sp-btn g sm" onclick="MU.po(null)">‹ Playlists</button><span class=sp-i></span><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">✎</button></div>
+<div class=sp-row style="margin:16px 0;flex-wrap:nowrap"><div class=sp-cv style="${cov(p.name)};width:96px;height:96px;font-size:40px">🎶</div><div class=sp-i><div class=sp-ti style="text-align:left">${esc(p.name)}</div><p class=sp-s style="margin-top:4px">${L.length} ${L.length==1?'música':'músicas'}</p></div></div>
+${L.length?`<button class=sp-btn onclick="MU.pplay('${p.id}')">▶ Tocar playlist</button>`:''}</div>
+${L.map(x=>`<div class="sp-r${x.i==cur&&ctx==p.id?' on':''}"><div class=sp-cv style="${cov(T[x.i].name)}" onclick="MU.pp('${p.id}',${x.i})">${x.i==cur&&ctx==p.id&&pl?'🔊':'🎵'}</div><div class=sp-i onclick="MU.pp('${p.id}',${x.i})"><div class=sp-n>${esc(nm(T[x.i].name))}</div></div><button class=sp-ib onclick="MU.pr('${p.id}','${x.k}')" aria-label="Tirar da playlist">✕</button></div>`).join('')||'<p class=sp-s style="padding:8px">Playlist vazia. Busque e adicione músicas abaixo.</p>'}`;
 }
 function resAdd(){
   const p=pget(PV);if(!p)return'';
-  if(!T.length)return'<p class=s>Adicione músicas na biblioteca primeiro.</p>';
-  const q=QA.trim();if(!q)return`<p class=s>${HINT}</p>`;
+  if(!T.length)return'<p class=sp-s style="padding:8px">Adicione músicas na biblioteca primeiro.</p>';
+  const q=QA.trim();if(!q)return'<p class=sp-s style="padding:8px">Digite o nome da música para adicionar.</p>';
   const r=T.map((t,i)=>({t,i})).filter(x=>!p.keys.includes(key(x.t))&&matches(x.t.name,q));
-  if(!r.length)return`<p class=s>Nada encontrado para “${esc(q)}” (ou já está na playlist).</p>`;
-  return r.slice(0,LIM).map(x=>`<div class=r><div class=f>${esc(nm(x.t.name))}<div class=s>${mb(x.t.size)}</div></div><button class="b sm" onclick="MU.pa('${p.id}',${x.i})">+ Adicionar</button></div>`).join('')+more(r.length);
+  if(!r.length)return`<p class=sp-s style="padding:8px">Nada encontrado para “${esc(q)}” (ou já está na playlist).</p>`;
+  return r.slice(0,LIM).map(x=>`<div class=sp-r><div class=sp-cv style="${cov(x.t.name)}">🎵</div><div class=sp-i><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class="sp-btn g sm" onclick="MU.pa('${p.id}',${x.i})">+ Adicionar</button></div>`).join('')+more(r.length);
 }
 function padd(){
-  return`<div class=c style="grid-column:1/-1"><h2>Adicionar da biblioteca</h2>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div></div>`;
+  return`<div class=sp-h>Adicionar músicas</div>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div>`;
 }
-const view=()=>'<h1>Música</h1><div class=g2>'+(RC?rcard()+rlcard():PV&&pget(PV)?pcard()+pdet()+padd():scard()+(DUP?dcard():'')+ban()+pcard()+plcard()+lcard())+dv()+'</div>';
+
+/* Aparelhos */
+function dv(){
+  const oc=openConns();
+  return`<div class=sp-h style="margin-top:0">Aparelhos</div>${oc.length?oc.map(c=>{const d=dev(c.hid);return`<div class=sp-card><div class=sp-row><div class=sp-cv style="background:#2a2a2a;cursor:default">${esc(d.icon)}</div><div class=sp-i style="cursor:default"><div class=sp-n>${esc(d.name)}</div><p class=sp-s>${c.hid==RC?'controlando agora':'conectado'}</p></div></div><div class=sp-row style="margin-top:12px"><button class="sp-btn g sm" onclick="MU.sy('${c.hid}')">⇄ Sincronizar músicas</button>${c.hid==RC?'':`<button class="sp-btn sm" onclick="MU.ctl('${c.hid}')">🎛 Controlar</button>`}</div></div>`}).join(''):'<div class=sp-card><p class=sp-s>Nenhum aparelho conectado. Conecte outro em Configurações → Dispositivos.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="go(\'cfg\')">Ir para Configurações</button></div>'}
+<p class=sp-s id=mu-xf style="margin-top:8px">${esc(XF)}</p>
+<p class=sp-s style="margin-top:8px">Só um aparelho toca por vez: ao dar play em um, os outros pausam sozinhos. <b style="color:#fff">Sincronizar</b> troca entre os dois as músicas que faltam. <b style="color:#fff">Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p>`;
+}
+
+/* Controle remoto */
+function rcard(){
+  const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
+  return`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn g sm" onclick="MU.stop()">‹ Voltar</button></div><div class="sp-card sp-np"><p class=sp-s>🎛 Controlando ${esc(d.icon+' '+d.name)}</p><div class=sp-art style="margin-top:14px;${s&&s.n?cov(s.n):'background:#2a2a2a'}">${s&&s.n?'🎵':'🎧'}</div><div class=sp-ti>${s?(s.n?esc(s.n):'Nenhuma música tocando'):'Aguardando o aparelho…'}</div>${s&&s.b?'<p class=sp-warn>⚠ O navegador do outro aparelho bloqueou o início da música. Toque na tela dele uma vez e tente de novo.</p>':''}${bar(p,s?s.dur:0)}${ctrl('MU.cmd',s&&s.p,s&&s.sh,s&&s.rp)}${vol('mu-v',s?s.v:1)}<button class="sp-btn g" style="margin-top:16px" onclick="MU.back()">🔊 Tocar aqui</button></div>`;
+}
+function resRem(){
+  const r=R[RC]||{},s=r.st,L=r.names||[];
+  if(!L.length)return'<p class=sp-s style="padding:8px">Esse aparelho ainda não tem músicas.</p>';
+  const q=QR.trim(),f=L.map((x,i)=>({x,i})).filter(o=>!q||mt(o.x,q));
+  if(!f.length)return none(q);
+  return f.slice(0,LIM).map(o=>`<div class="sp-r${s&&o.i==s.i?' on':''}"><div class=sp-cv style="${cov(o.x)}" onclick="MU.cmd('pl',${o.i})">${s&&o.i==s.i&&s.p?'🔊':'🎵'}</div><div class=sp-i onclick="MU.cmd('pl',${o.i})"><div class=sp-n>${esc(o.x)}</div></div></div>`).join('')+more(f.length);
+}
+function rlcard(){
+  const d=dev(RC);
+  return`<div class=sp-h>Biblioteca de ${esc(d.icon+' '+d.name)}</div>${sbox('mu-qr',QR,'MU.qr')}<div id=mu-resr>${resRem()}</div>`;
+}
+
+const view=()=>{
+  let b;
+  if(RC)b=rcard()+rlcard();
+  else if(TAB=='lib')b=lcard();
+  else if(TAB=='pls')b=PV&&pget(PV)?pdet()+padd():plcard();
+  else if(TAB=='dev')b=dv();
+  else b=home();
+  return CSS+'<div class=sp><div class=sp-t>Música</div>'+(RC?'':tabs())+b+mini()+'</div>';
+};
 
 /* ---- ações de playlist ---- */
 function newPL(then){
@@ -477,7 +563,8 @@ dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;draw();bls()
 
 return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
-  pn:()=>newPL(),po(id){PV=id;draw()},pe:editPL,pt:addTo,pplay:playPL,
+  tab(k){TAB=k;draw()},
+  pn:()=>newPL(),po(id){PV=id;if(id)TAB='pls';draw()},pe:editPL,pt:addTo,pplay:playPL,
   pp:(id,i)=>play(i,1,id),
   pa(id,i){const p=pget(id);if(!p)return;const k=key(T[i]);if(!p.keys.includes(k)){p.keys.push(k);touch(p)}draw()},
   pr(id,k){const p=pget(id);if(!p)return;p.keys=p.keys.filter(x=>x!=k);touch(p);draw()},
@@ -489,6 +576,7 @@ return{
   sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
   cmd,
   ctl(id){RC=id;el.pause();draw()},
+  stop(){RC=null;TAB='dev';draw()},
   take,dp(){DUP=!DUP;draw()},rx:rmExact,
   back(){take(RC)},
   sy(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
