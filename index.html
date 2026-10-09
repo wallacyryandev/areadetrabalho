@@ -1,4 +1,4 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Hub Pessoal</title><link rel="manifest" href="manifest.json">
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><title>Hub Pessoal</title><link rel="manifest" href="manifest.json">
 
 <meta name="theme-color" content="#0F1216">
 
@@ -206,6 +206,8 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 
 /* ===== Celular ===== */
 @media(max-width:900px){.g2.two{grid-template-columns:1fr}}
+@media(max-width:760px){input,select,textarea{font-size:16px}}
+html{touch-action:manipulation}
 @media(max-width:760px){
   body{display:block}
   nav{top:auto;left:0;right:0;width:100%;flex-direction:row;justify-content:space-around;gap:0;border-right:0;border-top:1px solid var(--bd);padding:6px 4px calc(6px + env(safe-area-inset-bottom,0));z-index:5;overflow:visible}
@@ -477,7 +479,7 @@ im(f){if(!f)return;f.text().then(t=>{try{S=Object.assign(S,JSON.parse(t));RD();a
 /* Celular: folha "Mais" com as páginas que não cabem na barra inferior */
 menu(){const m=$('#md');m.innerHTML=`<div class=box><h3>Menu</h3><div class=ml>${PG.slice(4).map(p=>`<a class="${page==p[0]?'on':''}" onclick="UI.mc();go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span></a>`).join('')}</div><div class=sy>${SY.chip()}</div></div>`;m.className='on';m.onclick=e=>{if(e.target==m)UI.mc()}}};
 
-const go=p=>{page=p;render();window.scrollTo(0,0)},ap=()=>{document.documentElement.dataset.t=S.theme;const m=document.querySelector('meta[name=theme-color]');if(m)m.content=S.theme=='light'?'#FFFFFF':'#0F1216'};
+const go=p=>{if(p!=page)try{history.pushState({p},'')}catch(e){}page=p;render();window.scrollTo(0,0)},ap=()=>{document.documentElement.dataset.t=S.theme;const m=document.querySelector('meta[name=theme-color]');if(m)m.content=S.theme=='light'?'#FFFFFF':'#0F1216'};
 
 function render(){ap();$('#nv').innerHTML='<b><img src="icon-180.png" alt="">Hub</b>'+PG.map((p,k)=>`<a class="${page==p[0]?'on':''}${k>3?' x':''}" onclick="go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span></a>`).join('')+`<a class="mo${PG.slice(4).some(p=>p[0]==page)?' on':''}" onclick="A.menu()">${UI.i('more')}<span>Mais</span></a><div class=sy>${SY.chip()}</div>`;$('#mn').innerHTML=P[page]();tick()}
 
@@ -534,6 +536,10 @@ document.addEventListener('keydown',e=>{if($('#md').className=='on')return;const
 <script>
 
 SY.init();
+
+/* Botão voltar do celular: fecha janela/tela cheia ou volta à tela anterior */
+try{history.replaceState({p:page},'')}catch(e){}
+window.addEventListener('popstate',e=>{const m=$('#md'),open=m.className=='on';if(open||FO){if(open&&($('#cn')||!m.querySelector('form')))UI.mc();else if(FO)fx();try{history.pushState({p:page},'')}catch(x){}return}page=(e.state&&e.state.p)||'home';render();window.scrollTo(0,0)});
 
 setInterval(tick,250);render();if(!S.name){fm('Seu nome',[{k:'n',l:'Como devo te chamar?',r:1}],o=>{S.name=o.n;RD()});$('#md .row').insertAdjacentHTML('beforeend',`<button type=button class="b g" onclick="SY.joinUI()">${UI.i('link')}Já uso em outro dispositivo</button>`)}
 
