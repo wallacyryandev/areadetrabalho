@@ -1,17 +1,18 @@
-/* Hub Pessoal - academia.js (v3)
-   Academia como app independente dentro do Hub: Início / Treinos / Exercícios / Progresso / Configurações.
-   Carregar DEPOIS de corrida.js. Reaproveita S, A, UI, P, render, sv, chart, TD, esc, uid, toast, RD, go, $ (index.html).
+/* Hub Pessoal - academia.js (v4)
+   Academia como app independente dentro do Hub: Início / Treinos / Exercícios / Progresso.
+   Configurações abrem pela engrenagem (mesmo padrão da Música): Navegação do Hub + preferências da Academia.
+   Carregar DEPOIS de corrida.js (index.html: <script src="academia.js"></script>).
+   Reaproveita S, A, UI, P, PG, render, sv, chart, TD, esc, uid, toast, RD, go, $ (index.html).
    Persistência: tudo novo (favoritos, exercícios personalizados, preferências, mapa de grupos) fica em S.use.gym
    (mesmo caminho já sincronizado). Fichas continuam em S.plans; treinos em S.workouts (nada disso muda de formato,
    só ganham campos opcionais e.l (carga alvo kg) e e.rt (descanso s) nos exercícios das fichas).
    Sessão = treino finalizado com ≥1 série, deduplicado por id. Datas AAAA-MM-DD em horário local. */
 (()=>{
-/* ====== AJUSTES DE INTEGRAÇÃO (edite aqui se o index.html usar outros nomes) ====== */
-const HUB_SEL='#side,#sidebar,.side,.sidebar,aside,#bnav,.bnav,.tabbar,nav.main'; /* menu geral do Hub escondido dentro da Academia */
 /* ====== TEMA (única fonte das cores; mude aqui para alterar o visual) ====== */
-const BASE={'--bg':'#101210','--bg2':'#191D19','--gc':'#202520','--bd':'#303830','--tx':'#F2F5F0','--t2':'#A0AAA0','--ok':'#55C98A','--wn':'#F2B84B','--er':'#E66B6B','--hv':'rgba(255,255,255,.06)'};
-const PAL={lima:['Lima','184,243,74','#B8F34A','#101A04'],azul:['Azul','90,169,242','#5AA9F2','#07121E'],ambar:['Âmbar','242,184,75','#F2B84B','#1C1303'],violeta:['Violeta','169,139,242','#A98BF2','#120A25']};
-const DEF={pal:'lima',un:'kg',rec:'seq',ar:1,sn:1,vb:1,hh:1};
+const BASE={'--bg':'#0D0D0F','--bg2':'#141416','--gc':'#1B1B1F','--bd':'#2B2B30','--tx':'#F5F5F5','--t2':'#A1A1AA','--ok':'#4CAF7D','--wn':'#E8B04A','--er':'#FF5A62','--hv':'rgba(255,255,255,.06)'};
+/* [nome, rgb, principal, texto sobre o destaque, claro, escuro] */
+const PAL={vermelho:['Vermelho','229,57,69','#E53945','#FFFFFF','#FF5A62','#B91C2C'],claro:['Vermelho claro','255,90,98','#FF5A62','#1B0507','#FF7A80','#E53945'],escuro:['Vermelho escuro','185,28,44','#B91C2C','#FFFFFF','#E53945','#8F1522']};
+const DEF={pal:'vermelho',un:'kg',rec:'seq',ar:1,sn:1,vb:1};
 
 const LB={peito:'Peito',ombros:'Ombros',biceps:'Bíceps',triceps:'Tríceps',antebraco:'Antebraço',abdomen:'Abdômen',quadriceps:'Quadríceps',panturrilha:'Panturrilha',trapezio:'Trapézio',dorsais:'Costas',lombar:'Lombar',gluteos:'Glúteos',posteriores:'Posteriores'};
 const EGR=['peito','dorsais','ombros','biceps','triceps','antebraco','abdomen','quadriceps','posteriores','gluteos','panturrilha','trapezio','lombar'];
@@ -86,11 +87,12 @@ Panturrilha sentado|panturrilha||m|i|Sentado, eleve os calcanhares contra o peso
 Elevação de panturrilha|panturrilha||p|i|Em pé, no chão ou em um degrau, suba na ponta dos pés e desça devagar.
 Panturrilha no leg press|panturrilha||m|i|Com a ponta dos pés na plataforma, empurre estendendo os tornozelos e volte.`.split('\n').map(l=>{const a=l.split('|');return{n:a[0],g:a[1],sec:a[2]?a[2].split(','):[],eq:a[3],mv:a[4],ins:a[5]||''}});
 const LIBM=new Map(RAW.map(r=>[nm(r.n),r])),LIB=RAW.map(r=>r.n);
-const TABS=[['ini','home','Início','Início'],['trn','dumbbell','Treinos','Treinos'],['exe','search','Exercícios','Exercícios'],['pro','chart','Progresso','Progresso'],['cfg','sliders','Configurações','Config.']];
+const TABS=[['ini','home','Início','Início'],['trn','dumbbell','Treinos','Treinos'],['exe','search','Exercícios','Exercícios'],['pro','chart','Progresso','Progresso']];
 const PT=[['cal','Calendário'],['mus','Músculos'],['gra','Gráficos'],['his','Histórico']];
 const MES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'],MS=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'],DS=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'],DF=['domingo','segunda-feira','terça-feira','quarta-feira','quinta-feira','sexta-feira','sábado'];
 const W0=0;
-let tq='',gt='ini',pt='cal',gm=null,gv='f',xq='',xf='',xe='',xm='',xv='',xd='',xc=0,xe2='',tp='',px='',cv='w',ca='',cs='',fx=0,hl=40,C=null;
+/* gt = aba atual ('ini','trn','exe','pro') ou 'set' (configurações); gp = aba para onde a seta das configurações volta */
+let tq='',gt='ini',gp='ini',pt='cal',gm=null,gv='f',xq='',xf='',xe='',xm='',xv='',xd='',xc=0,xe2='',tp='',px='',cv='w',ca='',cs='',fx=0,hl=40,C=null;
 
 /* ---- Datas locais ---- */
 const pd=s=>new Date(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10),12);
@@ -105,7 +107,8 @@ const enc=n=>encodeURIComponent(n).replace(/'/g,'%27');
 
 /* ---- Preferências (S.use.gym.cfg) ---- */
 const gy=()=>(S.use&&S.use.gym)||{};
-const cf=()=>Object.assign({},DEF,gy().cfg);
+/* quem tinha uma paleta antiga salva (ex.: "lima") volta para o vermelho padrão */
+const cf=()=>{const c=Object.assign({},DEF,gy().cfg);if(!PAL[c.pal])c.pal=DEF.pal;return c};
 const setG=o=>{S.use=Object.assign({},S.use,{gym:Object.assign({},gy(),o)})};
 const setC=o=>setG({cfg:Object.assign({},gy().cfg,o)});
 const cu=k=>cf().un=='lb'?Math.round(k*2.20462*10)/10:k;
@@ -277,31 +280,48 @@ const his=()=>{const L=ses().L.slice().reverse();return`<div class=g2><div class
 const pro=()=>{const b=pt=='cal'?`<div class=c id=cal>${cal()}</div>`:pt=='mus'?`<div class=gmm id=mm>${mm()}</div>`:pt=='gra'?gra():his();
 return`${UI.h('Progresso')}<div class=gsg role=tablist style="margin-bottom:12px">${PT.map(k=>`<button class="${pt==k[0]?'on':''}" role=tab aria-selected=${pt==k[0]} onclick="G.ps('${k[0]}')">${k[1]}</button>`).join('')}</div>${b}`};
 
-/* ====== CONFIGURAÇÕES DA ACADEMIA ====== */
+/* ====== CONFIGURAÇÕES (abre pela engrenagem) ======
+   1) Navegação do Hub: rotas reais, lidas de PG (index.html + musica.js) em tempo de execução.
+      Só aparece o que realmente existir como página. Corrida: aceita os ids 'cor', 'corrida' ou 'run'.
+   2) Academia: aparência, unidade, descanso, cronômetro, preferências de treino, exercícios, sincronização. */
 const ck=(k,t)=>`<label class=gck><input type=checkbox ${cf()[k]?'checked':''} onchange="G.ck('${k}',this.checked)">${t}</label>`;
-const cfgv=()=>{const c=cf(),un=names().filter(n=>!grp(n)),cus=gy().custom||[];
-return`${UI.h('Configurações')}<div class=g2>
-<div class=c>${UI.ct('Aparência')}<div class=row>${Object.keys(PAL).map(k=>`<span class="ch ${c.pal==k?'on':''}" onclick="G.pal('${k}')"><i class=sw style="background:${PAL[k][2]}"></i>${PAL[k][0]}</span>`).join('')}</div><button class="b g sm mt" onclick="G.rv()">Restaurar visual padrão</button></div>
-<div class=c>${UI.ct('Unidades')}<div class=row>${['kg','lb'].map(u=>`<span class="ch ${c.un==u?'on':''}" onclick="G.un('${u}')">${u}</span>`).join('')}</div><p class=s style="margin:8px 0 0">Muda a exibição de cargas. Os registros continuam salvos em kg.</p></div>
-<div class=c>${UI.ct('Descanso e cronômetro')}<label>Descanso padrão (segundos)<input type=number min=10 value=${S.rest} onchange="G.rs(this.value)"></label><div class=row>${[45,60,90,120,180].map(s=>`<span class="ch ${S.rest==s?'on':''}" onclick="G.rs(${s})">${s}s</span>`).join('')}</div>${ck('ar','Iniciar o descanso ao concluir a série')}${ck('sn','Som ao fim do descanso')}${ck('vb','Vibrar ao fim do descanso')}<button class="b g sm mt" onclick="A.nt()">${UI.i('bell')}Avisos de descanso</button></div>
+const NAV=[['home','Início','Resumo geral do seu dia'],['est','Estudos','Sessões, matérias e questões'],['gym','Academia','Treinos, exercícios e progresso'],['tar','Tarefas','Lista de tarefas e prioridades'],['age','Agenda','Compromissos e calendário'],['hab','Hábitos','Rotinas e sequências diárias'],['pro','Projetos','Andamento e tarefas dos projetos'],['not','Notas','Anotações e ideias rápidas'],['sta','Estatísticas','Números e gráficos do Hub'],['mus','Música','Player, playlists e aparelhos'],['cor','Corrida','Corridas, ritmo e histórico',['corrida','run']],['cfg','Configurações gerais','Conta, dados e dispositivos']];
+const hubNav=()=>{const pg=typeof PG!='undefined'?PG:[];return NAV.map(n=>{const id=[n[0],...(n[3]||[])].find(i=>pg.some(x=>x[0]==i)||P[i]);if(!id)return null;const p=pg.find(x=>x[0]==id);return{id,ic:p?p[1]:'🏃',n:n[1],d:n[2],me:id=='gym'}}).filter(Boolean)};
+const nConn=()=>{try{return typeof SY!='undefined'&&SY._conns?Object.values(SY._conns()).filter(c=>c.open&&c.hid).length:0}catch(e){return 0}};
+const cfgv=()=>{const c=cf(),un=names().filter(n=>!grp(n)),cus=gy().custom||[],nv=hubNav(),nc=nConn();
+return`<div class=gsh style="margin-top:6px">Navegação do Hub</div>
+<div class=c>${nv.map(x=>`<button class="gnv${x.me?' me':''}" onclick="G.nav('${esc(x.id)}')"><span class=ic>${esc(x.ic)}</span><span class=tx><b>${x.n}</b><small>${x.d}</small></span><span class=s>${x.me?'Você está aqui':'›'}</span></button>`).join('')||'<p class=s>Nenhuma área encontrada.</p>'}</div>
+<div class=gsh>Academia</div>
+<div class=g2 style="margin-top:0">
+<div class=c>${UI.ct('Aparência e cores')}<div class=row>${Object.keys(PAL).map(k=>`<span class="ch ${c.pal==k?'on':''}" onclick="G.pal('${k}')"><i class=sw style="background:${PAL[k][2]}"></i>${PAL[k][0]}</span>`).join('')}</div><button class="b g sm mt" onclick="G.rv()">Restaurar visual padrão</button></div>
+<div class=c>${UI.ct('Unidade de peso')}<div class=row>${['kg','lb'].map(u=>`<span class="ch ${c.un==u?'on':''}" onclick="G.un('${u}')">${u}</span>`).join('')}</div><p class=s style="margin:8px 0 0">Muda só a exibição das cargas. Os registros continuam salvos em kg.</p></div>
+<div class=c>${UI.ct('Tempo padrão de descanso')}<label>Segundos<input type=number min=10 value=${S.rest} onchange="G.rs(this.value)"></label><div class=row>${[45,60,90,120,180].map(s=>`<span class="ch ${S.rest==s?'on':''}" onclick="G.rs(${s})">${s}s</span>`).join('')}</div></div>
+<div class=c>${UI.ct('Cronômetro')}${ck('ar','Iniciar o descanso ao concluir a série')}${ck('sn','Som ao fim do descanso')}${ck('vb','Vibrar ao fim do descanso')}<button class="b g sm mt" onclick="A.nt()">${UI.i('bell')}Avisos de descanso</button></div>
 <div class=c>${UI.ct('Preferências de treino')}<label>Treino recomendado no Início<select onchange="G.rc(this.value)"><option value=seq ${c.rec=='seq'?'selected':''}>Próxima ficha na sequência</option>${S.plans.map(p=>`<option value="${p.id}" ${c.rec==p.id?'selected':''}>Sempre: ${esc(p.name)}</option>`).join('')}</select></label></div>
-<div class=c>${UI.ct('Exercícios personalizados')}${cus.map(x=>`<div class=r><span class=f>${esc(x.n)}<div class=s>${LB[x.g]||''}${x.eq?' · '+EQ[x.eq]:''}</div></div><button class="b g sm" onclick="G.xe('${enc(x.n)}')">${UI.i('edit')}</button><button class="b g sm" aria-label="Excluir" onclick="G.xdl('${enc(x.n)}')">${UI.i('x')}</button></div>`).join('')||'<p class=s>Nenhum exercício personalizado.</p>'}<button class="b sm mt" onclick="G.xn()">${UI.i('plus')}Novo exercício</button></div>
+<div class=c>${UI.ct('Sincronização entre dispositivos')}<div class=r><span class=f>Conexão</span><b style="color:${navigator.onLine?'var(--ok)':'var(--wn)'}">${navigator.onLine?'Online':'Offline'}</b></div><div class=r><span class=f>Aparelhos conectados agora</span><b>${nc}</b></div><p class=s style="margin:8px 0 0">${navigator.onLine?'Fichas, treinos, favoritos, exercícios e preferências da Academia seguem a mesma sincronização do Hub.':'Sem conexão: as alterações ficam neste aparelho e sincronizam quando ele reconectar.'}</p></div>
+</div>
+<div class=gsh>Exercícios</div>
+<div class=g2 style="margin-top:0">
+<div class=c>${UI.ct('Exercícios personalizados')}${cus.map(x=>`<div class=r><span class=f>${esc(x.n)}<div class=s>${LB[x.g]||''}${x.eq?' · '+EQ[x.eq]:''}</div></span><button class="b g sm" aria-label="Editar" onclick="G.xe('${enc(x.n)}')">${UI.i('edit')}</button><button class="b g sm" aria-label="Excluir" onclick="G.xdl('${enc(x.n)}')">${UI.i('x')}</button></div>`).join('')||'<p class=s>Nenhum exercício personalizado.</p>'}<button class="b sm mt" onclick="G.xn()">${UI.i('plus')}Novo exercício</button></div>
 <div class=c>${UI.ct('Exercícios sem grupo muscular')}${un.map((n,i)=>`<label>${esc(n)}<select onchange="G.as(${i},this.value)"><option value="">Escolher grupo…</option>${EGR.map(g=>`<option value=${g}>${LB[g]}</option>`).join('')}</select></label>`).join('')||'<p class=s>Todos os seus exercícios têm grupo associado.</p>'}</div>
-<div class=c>${UI.ct('Sincronização')}<p class=s style="margin:0 0 6px">Conexão: <b>${navigator.onLine?'online':'offline (alterações ficam no aparelho até reconectar)'}</b>. Fichas, treinos, favoritos, exercícios e preferências da Academia seguem a mesma sincronização do Hub.</p><button class="b g sm" onclick="go('cfg')">Dispositivos e sincronização</button></div>
-<div class=c>${UI.ct('Hub')}${ck('hh','Ocultar o menu geral do Hub dentro da Academia')}<div class="row mt"><button class="b g sm" onclick="G.hub()">‹ Voltar ao Hub</button><button class="b g sm" onclick="go('cfg')">Configurações gerais do Hub</button></div></div></div>`};
+</div>`};
 
 /* ====== TREINO ATIVO (fluxo existente, sem a navegação da Academia) ====== */
 const act=()=>{const a=S.active;return`<div class="gy act">${UI.h(esc(a.name),`<button class="b g sm" onclick="A.nt()">${UI.i('bell')}Avisos</button>`)}<div class=rest>${UI.i('clock')}<span id=rs>Descanso: pronto</span></div><div class=g2>${a.ex.map((e,i)=>{const L=last(e.n);return`<div class=c>${UI.ct(esc(e.n)+` <span class=s>${e.s}×${e.r}</span>`)}<p class="s lh">${L?'Última sessão ('+fdt(L.date)+'): '+sets(L.sets):'Sem sessão anterior.'}</p>${e.sets.map((x,j)=>{const p=L&&L.sets[j],df=p?x.l-p.l:null;return`<div class=r><span class=f>Série ${j+1}</span><span>${fw(x.l)} × ${x.r} reps</span>${df==null?'':`<span class=s style="color:${df>0?'var(--ok)':df<0?'var(--er)':''}">${df>0?'+':''}${cu(df)} ${cf().un}</span>`}</div>`}).join('')}<div class="row mt"><input id=l${i} type=number placeholder="${L&&L.sets[e.sets.length]?L.sets[e.sets.length].l+' kg':'kg'}" class=in-s><input id=r${i} type=number placeholder="reps" value=${e.r} class=in-s><button class="b sm" onclick="A.gs(${i})">${UI.i('check')}Concluir série</button></div></div>`}).join('')}</div><div class="row mt"><button class=b onclick="A.wf()">Finalizar treino</button><button class="b g" onclick="A.wc()">Cancelar</button></div></div>`};
 
-const V={ini,trn,exe,pro,cfg:cfgv};
-P.gym=()=>{C=null;if(S.active)return act();const c=fx?' fx':'';fx=0;return`<div class="gy${c}"><div class=gtop><button class="b g sm" onclick="G.hub()" aria-label="Voltar ao Hub">‹ Hub</button><b>Academia</b></div><div class=gn role=tablist>${TABS.map(t=>`<button class="${gt==t[0]?'on':''}" role=tab aria-selected=${gt==t[0]} onclick="G.t('${t[0]}')" aria-label="${t[3]}">${UI.i(t[1])}<span>${t[2]}</span></button>`).join('')}</div>${V[gt]()}<div class=gsp></div></div>`};
-/* nomes curtos no celular */
-TABS.forEach(t=>{t[2]=t[2]});
+const V={ini,trn,exe,pro,set:cfgv};
+const GEAR='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>';
+const BACK='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>';
+/* Sem botão "Voltar ao Hub". Topo: título + engrenagem. Dentro das configurações: seta (volta para a Academia) + título. */
+P.gym=()=>{C=null;if(S.active)return act();const c=fx?' fx':'',st=gt=='set';fx=0;
+return`<div class="gy${c}"><div class=gtop>${st?`<button class=gear onclick="G.cb()" aria-label="Voltar para a Academia" title="Academia">${BACK}</button><b>Configurações</b>`:`<b>Academia</b><span style="flex:1"></span><button class=gear onclick="G.set()" aria-label="Configurações" title="Configurações">${GEAR}</button>`}</div>${st?'':`<div class=gn role=tablist>${TABS.map(t=>`<button class="${gt==t[0]?'on':''}" role=tab aria-selected=${gt==t[0]} onclick="G.t('${t[0]}')" aria-label="${t[3]}">${UI.i(t[1])}<span>${t[2]}</span></button>`).join('')}</div>`}${V[gt]()}<div class=gsp></div></div>`};
 
-const hubHome=()=>{const k=['home','inicio','ini','dash','hub'].find(x=>P[x]);go(k||Object.keys(P).find(x=>x!='gym')||'cfg')};
 const plan=id=>S.plans.find(p=>p.id==id);
 window.G={
-t(x){gt=x;xd='';xc=0;tp='';fx=1;render();scrollTo(0,0)},hub(){hubHome()},
+t(x){gt=x;xd='';xc=0;tp='';fx=1;render();scrollTo(0,0)},
+set(){if(gt!='set')gp=gt;gt='set';xd='';xc=0;tp='';fx=1;render();scrollTo(0,0)},
+cb(){gt=gp&&gp!='set'?gp:'ini';fx=1;render();scrollTo(0,0)},
+nav(id){if(id=='gym')return G.cb();gt=gp&&gp!='set'?gp:'ini';go(id)},
 v(x){gv=x;C=null;upd('mm',mm)},m(g){gm=gm==g?null:g;C=null;upd('mm',mm)},ps(k){pt=k;fx=1;render()},
 q(v){xq=v;C=null;$('#xl').innerHTML=xlist()},f(g){xf=g;render()},fe(v){xe=v;render()},fm(v){xm=v;render()},fw(v){xv=v;render()},p(v){px=v;render()},
 xo(e){xd=decodeURIComponent(e);xc=0;fx=1;render();scrollTo(0,0)},xb(){xd='';xc=0;fx=1;render()},xn(){gt='exe';xd='';xc=1;xe2='';fx=1;render();scrollTo(0,0)},
@@ -323,26 +343,38 @@ go(){C=null;const p=planNext();p?A.ws(p.id):G.t('trn')},hm(){hl+=40;render()},
 cv(k){cv=k;cs='';C=null;upd('cal',cal)},ch(){ca='';cs=TD();C=null;upd('cal',cal)},sd(d){cs=cs==d?'':d;C=null;upd('cal',cal)},
 cn(n){const a=ca||TD(),y=+a.slice(0,4),m=+a.slice(5,7)-1;ca=cv=='w'?addD(a,7*n):cv=='m'?ymd(new Date(y,m+n,1)):(y+n)+'-01-01';cs='';C=null;upd('cal',cal)},
 pal(k){setC({pal:k});RD()},un(u){setC({un:u});RD()},ck(k,v){setC({[k]:v?1:0});RD()},rc(v){setC({rec:v});RD()},rs(v){S.rest=Math.max(10,+v||90);sv();render()},
-rv(){setC({pal:DEF.pal,hh:DEF.hh});RD();toast('Visual padrão restaurado')}};
+rv(){setC({pal:DEF.pal});RD();toast('Visual padrão restaurado')}};
 
-/* ---- Modo aplicativo: tema da Academia e menu do Hub só enquanto a Academia estiver na tela ---- */
+/* ---- Modo aplicativo (mesmo conceito da Música: body.mu-full) ----
+   Enquanto a Academia estiver na tela: menu geral do Hub escondido, tema da Academia aplicado.
+   Seletores reais do index.html: <nav id=nv> (menu lateral/inferior) e <main id=mn>. */
+const _rd=render;
+window.render=function(){document.body.classList.toggle('gym-hub',typeof page!='undefined'&&page=='gym');_rd()};
 let sk='',raf=0;
-const syncApp=()=>{const on=!!document.querySelector('.gy'),c=cf(),b=document.body,k=on+'|'+c.pal+'|'+c.hh;if(k==sk)return;sk=k;b.classList.toggle('gym-on',on);b.classList.toggle('gym-hub',on&&c.hh!=0);const p=PAL[c.pal]||PAL.lima,v=Object.assign({},BASE,{'--ac':p[2],'--acr':p[1],'--gon':p[3]});Object.keys(v).forEach(x=>on?b.style.setProperty(x,v[x]):b.style.removeProperty(x))};
+const syncApp=()=>{const on=!!document.querySelector('.gy'),c=cf(),b=document.body,k=on+'|'+c.pal;if(k==sk)return;sk=k;b.classList.toggle('gym-on',on);b.classList.toggle('gym-hub',on);const p=PAL[c.pal]||PAL.vermelho,v=Object.assign({},BASE,{'--ac':p[2],'--acr':p[1],'--gon':p[3],'--acl':p[4],'--acd':p[5]});Object.keys(v).forEach(x=>on?b.style.setProperty(x,v[x]):b.style.removeProperty(x));const m=document.querySelector('meta[name=theme-color]');if(m)m.content=on?BASE['--bg']:'#0B0F14'};
 new MutationObserver(()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(syncApp)}).observe(document.body,{childList:true,subtree:true});syncApp();
 
 const st=document.createElement('style');st.textContent=`
 body.gym-on{background:var(--bg)!important;color:var(--tx)}
-body.gym-hub :is(${HUB_SEL}){display:none!important}
-body.gym-hub :is(main,.main,#main,.content){margin-left:0!important}
-.gy{--gu:#262c26;--g1:var(--ac);--gs:#1a1f1a;--gl:#3a443a;--gb:var(--bd);color:var(--tx)}
+body.gym-hub nav{display:none!important}
+body.gym-hub main{margin-left:0!important}
+.gy{--gu:#26262B;--g1:var(--ac);--gs:#18181B;--gl:#3A3A41;--gb:var(--bd);color:var(--tx)}
 .gy .c{background:var(--gc);border-color:var(--bd)}
-.gy .b:not(.g){background:var(--ac);color:var(--gon);border-color:var(--ac)}.gy .b.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}.gy .b:disabled{opacity:.4}
+.gy .b:not(.g){background:var(--ac);color:var(--gon);border-color:var(--ac)}.gy .b:not(.g):active{background:var(--acd)}.gy .b.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}.gy .b:disabled{opacity:.4}
+.gy .b.big2{background:linear-gradient(135deg,var(--acl),var(--ac) 55%,var(--acd));border-color:var(--ac);box-shadow:0 6px 20px rgba(var(--acr),.35)}
 .gy .ch{border:1px solid var(--bd)}.gy .ch.on{background:var(--ac);color:var(--gon);border-color:var(--ac)}
 .gy input,.gy select,.gy textarea{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px}
+.gy input:focus,.gy select:focus,.gy textarea:focus{outline:0;border-color:var(--ac);box-shadow:0 0 0 2px rgba(var(--acr),.25)}
+.gy input[type=checkbox],.gy input[type=range]{accent-color:var(--ac)}
 .gy .bar{background:var(--bd)}.gy .bar i{background:var(--ac)}
 .gy.fx>:not(.gn):not(.gtop){animation:gfade .22s ease both}@keyframes gfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .gy .ph{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .gtop{display:flex;align-items:center;gap:10px;margin-bottom:6px}.gtop b{font-size:14px;color:var(--t2);letter-spacing:.04em;text-transform:uppercase}
+.gear{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--t2);cursor:pointer;transition:background .15s,color .15s}.gear svg{width:22px;height:22px;fill:currentColor}.gear:hover{background:var(--hv);color:var(--tx)}.gear:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.gsh{font-size:18px;font-weight:700;margin:24px 0 10px;padding-left:10px;border-left:3px solid var(--ac)}
+.gnv{display:flex;align-items:center;gap:12px;width:100%;padding:10px 8px;border:0;border-bottom:1px solid var(--bd);border-radius:8px;background:transparent;color:var(--tx);font:inherit;text-align:left;cursor:pointer;transition:background .15s}.gnv:last-child{border-bottom:0}.gnv:hover{background:var(--hv)}.gnv:focus-visible{outline:2px solid var(--ac);outline-offset:-2px}
+.gnv .ic{width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:20px;background:var(--bg2);border:1px solid var(--bd);border-radius:10px;flex:none}
+.gnv .tx{flex:1;min-width:0;display:flex;flex-direction:column}.gnv .tx small{color:var(--t2);font-size:12.5px;line-height:1.35}.gnv.me .ic{border-color:var(--ac)}.gnv.me .s{color:var(--ac)}
 .gst,.gst3{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin:0 0 12px}.gst3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .gst>div{border:1px solid var(--gb);border-radius:10px;padding:10px 12px}.gst b{display:block;font-size:20px;line-height:1.25}.gst span{font-size:12px;color:var(--t2)}
 .gmm{display:grid;gap:12px;max-width:980px}
@@ -388,8 +420,7 @@ body.gym-hub :is(main,.main,#main,.content){margin-left:0!important}
 .gsp{display:none}
 @media(min-width:900px){.bt{display:none}}
 @media(max-width:899px){.bv:not(.on){display:none}.bv{max-width:190px}}
-@media(max-width:760px){.gn{position:fixed;left:0;right:0;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:50;margin:0;padding:0;justify-content:space-around;overflow:visible;background:var(--bg2);border:0;border-top:1px solid var(--bd)}
-body.gym-hub .gn{bottom:0;padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(max-width:760px){.gn{position:fixed;left:0;right:0;bottom:0;z-index:50;margin:0;padding:0 0 env(safe-area-inset-bottom,0px);justify-content:space-around;overflow:visible;background:var(--bg2);border:0;border-top:1px solid var(--bd)}
 .gn button{flex:1;flex-direction:column;gap:2px;padding:8px 0 6px;font-size:11px;min-width:0;min-height:52px;border-radius:0;justify-content:center}.gn button::after{left:25%;right:25%;top:-1px;bottom:auto}.gn button:hover{background:none}.gsp{display:block;height:84px}
 .gcd{min-height:0}.gmd{height:46px}}
 @media(prefers-reduced-motion:reduce){.gy *{animation:none!important;transition:none!important}}`;
