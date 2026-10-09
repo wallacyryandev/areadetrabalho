@@ -8,7 +8,8 @@
    NOVO nesta versão (seletor de aparelhos, estilo Spotify Connect):
    - Ícone de aparelhos no player ("Tocando agora", mini player e controle remoto) abre um painel inferior
      (bottom sheet) escuro com: este aparelho e os aparelhos do Hub (conectados pelo "Conectar dispositivo").
-   - Tocar em um aparelho do Hub TRANSFERE a reprodução (mesma música, mesma posição, mesmo estado). */
+   - Tocar em um aparelho do Hub TRANSFERE a reprodução (mesma música, mesma posição, mesmo estado).
+   - Correção: classes do painel prefixadas com "ds-" (evita conflito com o CSS global do Hub) e título removido. */
 const MU=(()=>{
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
@@ -43,6 +44,7 @@ const I={
   back:sv_('M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z'),
   dev:sv_('M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm0 18H7V5h10v14z'),
   check:sv_('M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'),
+  home:sv_('M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'),
   /* ícone "Conectar a um aparelho" (tela + alto-falante), desenhado em traço */
   devs:'<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6"/><rect x="13" y="12" width="8" height="9" rx="1.6"/><circle cx="17" cy="17.2" r="1.7"/><path d="M8 20h4"/></svg>'
 };
@@ -501,22 +503,22 @@ function onGo(c,m){
 function ctl(id){pauseNow();RC=id;draw()}
 function syncDev(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');say('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
 
+/* CSS do painel: todas as classes usam o prefixo "ds-" para não colidir com o CSS global do Hub */
 const DSCSS=`#mu-ds{position:fixed;inset:0;z-index:9999;visibility:hidden;pointer-events:none;transition:visibility 0s linear .35s;font-family:inherit}
 #mu-ds.open{visibility:visible;pointer-events:auto;transition:none}
 #mu-ds *{box-sizing:border-box}
-#mu-ds .bk{position:absolute;inset:0;background:rgba(0,0,0,.6);opacity:0;transition:opacity .3s ease}
-#mu-ds.open .bk{opacity:1}
-#mu-ds .sh{position:absolute;left:0;right:0;bottom:0;max-width:560px;margin:0 auto;max-height:86vh;max-height:86dvh;overflow-y:auto;overscroll-behavior:contain;background:#121212;color:#fff;border-radius:20px 20px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,.6);padding:0 14px calc(18px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);outline:0}
-#mu-ds.open .sh{transform:translateY(0)}
-#mu-ds .sh.drag{transition:none}
-#mu-ds .gr{display:flex;justify-content:center;padding:10px 0 6px;touch-action:none;cursor:grab;position:sticky;top:0;background:#121212;z-index:1}
-#mu-ds .gr i{width:40px;height:4px;border-radius:2px;background:#5a5a5a}
-#mu-ds .hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 2px 8px}
-#mu-ds h2{font-size:18px;font-weight:800;margin:0}
+#mu-ds .ds-bk{position:absolute;inset:0;background:rgba(0,0,0,.6);opacity:0;transition:opacity .3s ease}
+#mu-ds.open .ds-bk{opacity:1}
+#mu-ds .ds-sh{display:block;position:absolute;left:0;right:0;bottom:0;width:auto;max-width:560px;margin:0 auto;max-height:86vh;max-height:86dvh;overflow-y:auto;overscroll-behavior:contain;background:#121212;color:#fff;border-radius:20px 20px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,.6);padding:0 14px calc(18px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);outline:0}
+#mu-ds.open .ds-sh{transform:translateY(0)}
+#mu-ds .ds-sh.drag{transition:none}
+#mu-ds .ds-gr{display:flex;justify-content:center;padding:10px 0 6px;touch-action:none;cursor:grab;position:sticky;top:0;background:#121212;z-index:1}
+#mu-ds .ds-gr i{width:40px;height:4px;border-radius:2px;background:#5a5a5a}
+#mu-ds .ds-hd{display:flex;justify-content:flex-end;padding:0 2px 4px}
 #mu-ds svg{width:1em;height:1em;fill:currentColor;flex:none;pointer-events:none}
 #mu-ds svg.o{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-#mu-ds .x{background:none;border:0;color:#b3b3b3;font-size:22px;padding:8px;border-radius:50%;cursor:pointer;display:inline-flex}
-#mu-ds .x:hover{color:#fff}
+#mu-ds .ds-x{background:none;border:0;color:#b3b3b3;font-size:22px;padding:8px;border-radius:50%;cursor:pointer;display:inline-flex}
+#mu-ds .ds-x:hover{color:#fff}
 #mu-ds button:focus-visible,#mu-ds summary:focus-visible{outline:2px solid #1db954;outline-offset:2px}
 #mu-ds .ds-h2{color:#b3b3b3;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin:18px 4px 6px}
 #mu-ds .ds-r{display:flex;align-items:center;gap:6px;border-radius:12px;margin-bottom:4px}
@@ -550,9 +552,9 @@ const DSCSS=`#mu-ds{position:fixed;inset:0;z-index:9999;visibility:hidden;pointe
 #mu-ds .ds-r{flex-wrap:wrap}
 #mu-ds .ds-b{min-height:40px}
 #mu-ds .ds-n{overflow-wrap:anywhere}
-@media(max-width:480px){#mu-ds .sh{padding-left:10px;padding-right:10px}#mu-ds .ds-m{flex:1 1 100%}#mu-ds .ds-r>.ds-b{margin:0 10px 10px 62px}#mu-ds .ds-t b{white-space:normal;overflow-wrap:anywhere}#mu-ds .hd h2{font-size:17px}}
-@media(max-height:480px){#mu-ds .sh{max-height:94vh;max-height:94dvh}}
-@media(prefers-reduced-motion:reduce){#mu-ds .sh,#mu-ds .bk{transition:none}#mu-ds .ds-eq i,#mu-ds .ds-spin{animation-duration:2.5s}}`;
+@media(max-width:480px){#mu-ds .ds-sh{padding-left:10px;padding-right:10px}#mu-ds .ds-m{flex:1 1 100%}#mu-ds .ds-r>.ds-b{margin:0 10px 10px 62px}#mu-ds .ds-t b{white-space:normal;overflow-wrap:anywhere}}
+@media(max-height:480px){#mu-ds .ds-sh{max-height:94vh;max-height:94dvh}}
+@media(prefers-reduced-motion:reduce){#mu-ds .ds-sh,#mu-ds .ds-bk{transition:none}#mu-ds .ds-eq i,#mu-ds .ds-spin{animation-duration:2.5s}}`;
 
 const DSHELP=`<details class=ds-hp><summary>Como conectar a TV Samsung</summary><p>Abra o Hub no navegador da TV e conecte em Configurações → Dispositivos. Ela passa a aparecer em “Aparelhos do Hub” e recebe a reprodução com a música, a posição e o estado. As músicas precisam estar sincronizadas nela (botão Sincronizar).</p></details>`;
 
@@ -593,18 +595,18 @@ function dsMount(){
   if(document.getElementById('mu-ds'))return;
   const st=document.createElement('style');st.textContent=DSCSS;document.head.appendChild(st);
   const d=document.createElement('div');d.id='mu-ds';d.inert=true;d.setAttribute('aria-hidden','true');
-  d.innerHTML=`<div class=bk onclick="MU.dsh(0)"></div><div class=sh role=dialog aria-modal=true aria-labelledby=mu-dst tabindex=-1><div class=gr id=mu-dsg><i></i></div><div class=hd><h2 id=mu-dst>Conectar a um aparelho</h2><button class=x onclick="MU.dsh(0)" aria-label="Fechar">${I.x}</button></div><div id=mu-dsb></div></div>`;
+  d.innerHTML=`<div class=ds-bk onclick="MU.dsh(0)"></div><div class=ds-sh role=dialog aria-modal=true aria-label="Conectar a um aparelho" tabindex=-1><div class=ds-gr id=mu-dsg><i></i></div><div class=ds-hd><button class=ds-x onclick="MU.dsh(0)" aria-label="Fechar">${I.x}</button></div><div id=mu-dsb></div></div>`;
   document.body.appendChild(d);
   d.addEventListener('keydown',e=>{
     if(e.key=='Escape'){e.preventDefault();dsh(0);return}
     if(e.key!='Tab')return;
     const f=[...d.querySelectorAll('button:not(:disabled),summary')];if(!f.length)return;
-    const a=f[0],z=f[f.length-1],ac=document.activeElement,sh=d.querySelector('.sh');
+    const a=f[0],z=f[f.length-1],ac=document.activeElement,sh=d.querySelector('.ds-sh');
     if(e.shiftKey&&(ac===a||ac===sh)){e.preventDefault();z.focus()}
     else if(!e.shiftKey&&ac===z){e.preventDefault();a.focus()}
   });
   /* arrastar a alça para baixo fecha o painel */
-  const sh=d.querySelector('.sh'),g=d.querySelector('#mu-dsg');let y0=null,dy=0;
+  const sh=d.querySelector('.ds-sh'),g=d.querySelector('#mu-dsg');let y0=null,dy=0;
   g.addEventListener('pointerdown',e=>{y0=e.clientY;dy=0;sh.classList.add('drag');try{g.setPointerCapture(e.pointerId)}catch(x){}});
   g.addEventListener('pointermove',e=>{if(y0==null)return;dy=Math.max(0,e.clientY-y0);sh.style.transform='translateY('+dy+'px)'});
   const end=()=>{if(y0==null)return;y0=null;sh.classList.remove('drag');sh.style.transform='';if(dy>90)dsh(0);dy=0};
@@ -621,7 +623,7 @@ function dsh(v){
     void d.offsetHeight;
     d.classList.add('open');
     document.body.style.overflow='hidden';
-    setTimeout(()=>{const s=d.querySelector('.sh');if(s&&DSO)s.focus()},60);
+    setTimeout(()=>{const s=d.querySelector('.ds-sh');if(s&&DSO)s.focus()},60);
   }else{
     if(!DSO)return;
     DSO=0;d.classList.remove('open');d.inert=true;d.setAttribute('aria-hidden','true');
@@ -640,7 +642,7 @@ function dsel(k,id){
 /* rótulos do botão de aparelhos no player */
 const dlabel=()=>RC?dev(RC).name:'Este aparelho';
 const dbtn=()=>`<div class=sp-dvr><button class="sp-dvb${RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho. Aparelho atual: ${esc(dlabel())}">${I.devs}<span>${esc(dlabel())}</span></button></div>`;
-const dbi=()=>`<button class="sp-ib${RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho" title="Conectar a um aparelho">${I.devs}</button>`;
+const dbi=()=>`<button class="sp-dvb${RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho. Aparelho atual: ${esc(dlabel())}" title="Conectar a um aparelho">${I.devs}<span>${esc(dlabel())}</span></button>`;
 
 /* ---- estilo (tema escuro estilo Spotify) ---- */
 const CSS=`<style>
@@ -692,7 +694,19 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-pc .sp-cv{width:100%;height:auto;aspect-ratio:1;font-size:40px;margin-bottom:10px}
 .sp-q{width:100%;background:#2a2a2a;border:0;border-radius:999px;color:#fff;padding:11px 18px;font:inherit;font-size:15px;margin-bottom:10px;outline:0}
 .sp-q:focus{box-shadow:0 0 0 2px #1db954}
-.sp-mini{position:sticky;bottom:8px;margin-top:16px;background:#282828;border-radius:10px;padding:8px 10px 12px;display:flex;align-items:center;gap:6px;box-shadow:0 6px 20px #000a}
+.sp.hb{padding-bottom:160px}
+.sp-bot{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#121212;box-shadow:0 -8px 24px #000c}
+.sp-bi{max-width:720px;margin:0 auto}
+.sp-mini{position:relative;margin:8px 8px 4px;background:#282828;border-radius:10px;padding:8px 10px 12px;display:flex;align-items:center;gap:6px}
+.sp-mini .sp-i,.sp-mini .sp-cv{cursor:default}
+.sp-mini .sp-cv{width:40px;height:40px}
+.sp-mini .sp-dvb{padding:6px 8px;font-size:12px;max-width:130px}
+.sp-nav{display:flex;border-top:1px solid #242424;padding-bottom:env(safe-area-inset-bottom,0px)}
+.sp-nb{flex:1;background:none;border:0;color:#b3b3b3;font:inherit;font-size:11px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px 10px;cursor:pointer}
+.sp-nb svg{font-size:24px}
+.sp-nb:hover{color:#fff}
+.sp-nb.on{color:#1db954}
+@media(max-width:430px){.sp-mini .sp-dvb span{display:none}}
 .sp-prog{position:absolute;left:10px;right:10px;bottom:4px;height:3px;border-radius:2px;background:#555;overflow:hidden}
 .sp-prog i{display:block;height:100%;background:#1db954}
 .sp-prof{display:flex;align-items:center;gap:14px;margin:6px 0 18px}
@@ -720,18 +734,13 @@ function ban(){
   const d=dev(id),s=R[id].st;
   return`<div class=sp-card style="box-shadow:inset 0 0 0 1px #1db954"><div class=sp-ti style="font-size:17px">Tocando em ${esc(d.name)}</div><p class=sp-s style="margin-top:4px">${esc(s.n||'')}</p><div class=sp-row style="margin-top:12px"><button class=sp-btn onclick="MU.take('${id}')">Tocar aqui</button><button class="sp-btn g" onclick="MU.ctl('${id}')">Controlar</button></div></div>`;
 }
-/* Tocando agora (aba Início) */
-function pcard(){
-  const t=T[cur],pl=playing(),d=curDur();
-  return`<div class="sp-card sp-np"><div class=sp-art style="${t?cov(t.name):'background:#2a2a2a'}">${I.note}</div><div class=sp-ti>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s style="margin-top:4px">${t?esc(APP)+(ctx&&pget(ctx)?' · '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${t?`<button class="sp-btn g sm" style="margin-top:10px" onclick="MU.ren(${cur})">Renomear</button>`:''}${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('',curVol())}${dbtn()}</div>`;
-}
-/* Mini player (outras abas) */
+/* Mini player (barra fixa de baixo, em todas as abas) */
 function mini(){
-  if(cur<0||!T[cur]||TAB=='home'||RC)return'';
-  const pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${cov(T[cur].name)}" onclick="MU.tab('home')">${I.note}</div><div class=sp-i onclick="MU.tab('home')"><div class=sp-n>${esc(nm(T[cur].name))}</div><p class=sp-s>${esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  const t=cur>=0&&T[cur],pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
+  return`<div class=sp-mini><div class=sp-cv style="${t?cov(t.name):'background:#2a2a2a'}">${I.note}</div><div class=sp-i><div class=sp-n>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s>${esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
-const tabs=()=>`<div class=sp-tabs>${[['home','Início'],['lib','Músicas'],['pls','Playlists'],['dev','Aparelhos']].map(a=>`<button class="sp-chip${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')">${a[1]}</button>`).join('')}</div>`;
+/* Barra de navegação do Música (fixa embaixo) */
+const bnav=()=>`<div class=sp-nav>${[['home','Início',I.home],['lib','Músicas',I.note],['pls','Playlists',I.list],['dev','Aparelhos',I.dev]].map(a=>`<button class="sp-nb${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')"${TAB==a[0]?' aria-current=page':''}>${a[2]}<span>${a[1]}</span></button>`).join('')}</div>`;
 
 const LIM=50;
 const more=n=>n>LIM?`<p class=sp-s style="margin:8px 8px 0">Mostrando ${LIM} de ${n}. Digite para refinar.</p>`:'';
@@ -745,7 +754,7 @@ function plgrid(){
   return`<div class=sp-h>Suas playlists<button class="sp-btn g sm" onclick="MU.pn()">Nova</button></div><div class=sp-grid>${L.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=sp-pc onclick="MU.po('${p.id}')"><div class=sp-cv style="${plSt(p)}">${p.img?'':I.list}</div><div class=sp-row style="flex-wrap:nowrap"><div class=sp-i><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="event.stopPropagation();MU.pplay('${p.id}')" aria-label="Tocar playlist">${I.play}</button></div></div>`}).join('')}</div>`;
 }
 function home(){
-  return ban()+pcard()+(T.length?'':`<div class=sp-card><p class=sp-s>Sua biblioteca está vazia.</p><label class=sp-btn style="margin-top:10px;cursor:pointer">Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>`)+plgrid();
+  return ban()+(T.length?'':`<div class=sp-card><p class=sp-s>Sua biblioteca está vazia.</p><label class=sp-btn style="margin-top:10px;cursor:pointer">Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>`)+plgrid();
 }
 
 /* Músicas (biblioteca) */
@@ -832,7 +841,8 @@ const view=()=>{
   else if(TAB=='dev')b=dv();
   else b=home();
   const top=`<div class=sp-top><div class=sp-t>Música</div><button class=sp-ib onclick="MU.menu(1)" title="Configurações" aria-label="Configurações">${I.gear}</button></div>`;
-  return CSS+'<div class=sp>'+top+(RC?'':tabs())+b+mini()+'</div>';
+  const bot=RC?'':'<div class=sp-bot><div class=sp-bi>'+mini()+bnav()+'</div></div>';
+  return CSS+'<div class="sp'+(RC?'':' hb')+'">'+top+b+bot+'</div>';
 };
 
 /* ---- ações de playlist ---- */
