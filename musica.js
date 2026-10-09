@@ -23,7 +23,7 @@ let el=els[0],pre=null,lk=0,lr=null;
 let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0;
 /* estado do Google Cast e do painel de aparelhos */
-let CA={sdk:'idle',cs:'',on:0,name:'',app:'',k:null,busy:0,req:0,err:'',pl:null,ct:null,seq:0,lp:0,fin:null},DSO=0,dsF=null,XS={},XE={};
+let CA={base:'',sdk:'idle',cs:'',on:0,name:'',app:'',k:null,busy:0,req:0,err:'',pl:null,ct:null,seq:0,lp:0,fin:null},DSO=0,dsF=null,XS={},XE={};
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
 const APP='Hub Pessoal';
@@ -492,8 +492,14 @@ ${G.length>100?`<p class=sp-s style="margin-top:10px">Mostrando 100 de ${G.lengt
    - O aparelho Cast baixa a música de uma URL pública (HTTPS + CORS). Um blob: do celular não serve.
    ====================================================================== */
 const CAST_APP='CC1AD845'; /* Default Media Receiver. Troque pelo App ID do seu receptor personalizado */
-const castBase=()=>{let b='';try{b=localStorage.getItem('hub_cast_base')||''}catch(e){}if(!b){try{b=new URL('musicas/',location.href).href}catch(e){b=''}}return b&&b.slice(-1)!='/'?b+'/':b};
-const castUrl=t=>castBase()+encodeURIComponent(t.name);
+/* pastas candidatas: se você definiu um endereço no painel, só ele é usado; senão testa estas ao lado do index.html */
+const castBases=()=>{
+  let u='';try{u=localStorage.getItem('hub_cast_base')||''}catch(e){}
+  const f=x=>x.slice(-1)=='/'?x:x+'/';
+  if(u)return[f(u)];
+  return['./','musica/','musicas/','Musica/','Musicas/','música/','músicas/','music/','audio/'].map(p=>{try{return new URL(p,location.href).href}catch(e){return''}}).filter(Boolean);
+};
+const castBase=()=>CA.base||castBases()[0]||'';
 const MIME={mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',ogg:'audio/ogg',opus:'audio/ogg',wav:'audio/wav',flac:'audio/flac'};
 const castType=t=>t.blob.type||MIME[(t.name.split('.').pop()||'').toLowerCase()]||'audio/mpeg';
 const castSess=()=>{try{return cast.framework.CastContext.getInstance().getCurrentSession()}catch(e){return null}};
@@ -591,13 +597,15 @@ async function castProbe(u){
 }
 async function castLoadM(i,auto,pos){
   const s=castSess(),t=T[i];if(!s||!t)return;
-  const url=castUrl(t),my=++CA.seq;
+  const my=++CA.seq,fn=encodeURIComponent(t.name),tried=[];let url='';
   CA.busy=1;CA.err='';CA.k=null;dsUpd();draw();
   try{
-    if(!await castProbe(url)){
+    const bs=CA.base?[CA.base,...castBases().filter(b=>b!=CA.base)]:castBases();
+    for(const b of bs){tried.push(b+fn);if(await castProbe(b+fn)){url=b+fn;CA.base=b;break}if(my!=CA.seq)return}
+    if(!url){
       if(my!=CA.seq)return;
-      CA.err='Não achei "'+nm(t.name)+'" em '+castBase()+' (ou o CORS está bloqueado). Hospede o arquivo ali com o mesmo nome, ou mude o endereço no painel de aparelhos.';
-      CA.busy=0;say('O aparelho Cast precisa baixar a música de um endereço público.');dsUpd();draw();return;
+      CA.err='Não achei "'+t.name+'" no servidor. Tentei: '+tried.slice(0,2).join(' e ')+(tried.length>2?' (+'+(tried.length-2)+' pastas)':'')+'. Abra esse endereço no navegador para conferir: o arquivo precisa ter exatamente esse nome (maiúsculas/minúsculas e extensão) e estar no mesmo site, em HTTPS. Ou defina a pasta certa em "Alterar endereço".';
+      CA.busy=0;say('Música não encontrada no servidor para o Cast.');dsUpd();draw();return;
     }
     const mi=new chrome.cast.media.MediaInfo(url,castType(t));
     mi.streamType=chrome.cast.media.StreamType.BUFFERED;
@@ -639,7 +647,7 @@ function castCfg(){
   fm('Músicas para o Cast',[{k:'u',l:'Endereço (https://…/) da pasta pública com os arquivos',v:castBase(),r:0}],o=>{
     const u=(o.u||'').trim();
     if(u&&!/^https:\/\//i.test(u)){say('Use um endereço que comece com https://');return}
-    try{u?localStorage.setItem('hub_cast_base',u):localStorage.removeItem('hub_cast_base')}catch(e){}
+    try{u?localStorage.setItem('hub_cast_base',u):localStorage.removeItem('hub_cast_base')}catch(e){}CA.base='';
     CA.err='';draw();
   });
 }
@@ -732,6 +740,11 @@ const DSCSS=`#mu-ds{position:fixed;inset:0;z-index:9999;visibility:hidden;pointe
 #mu-ds .ds-hp summary{cursor:pointer;font-weight:700;color:#fff;padding:6px 4px}
 #mu-ds .ds-hp p{margin:6px 4px;line-height:1.5}
 #mu-ds code{background:#2a2a2a;border-radius:4px;padding:1px 5px;word-break:break-all;color:#fff}
+#mu-ds .ds-r{flex-wrap:wrap}
+#mu-ds .ds-b{min-height:40px}
+#mu-ds .ds-n{overflow-wrap:anywhere}
+@media(max-width:480px){#mu-ds .sh{padding-left:10px;padding-right:10px}#mu-ds .ds-m{flex:1 1 100%}#mu-ds .ds-r>.ds-b{margin:0 10px 10px 62px}#mu-ds .ds-t b{white-space:normal;overflow-wrap:anywhere}#mu-ds .hd h2{font-size:17px}}
+@media(max-height:480px){#mu-ds .sh{max-height:94vh;max-height:94dvh}}
 @media(prefers-reduced-motion:reduce){#mu-ds .sh,#mu-ds .bk{transition:none}#mu-ds .ds-eq i,#mu-ds .ds-spin{animation-duration:2.5s}}`;
 
 const DSHELP=`<details class=ds-hp><summary>Como conectar a TV Samsung</summary><p><b>Google Cast:</b> TVs Samsung de 2026 (e algumas anteriores, após atualização) têm Google Cast embutido, e Chromecast/Google TV ligados à TV também servem. Se o painel mostrar “Escolher aparelho Cast”, toque nele e escolha a TV na lista do Chrome. Se mostrar “Procurando…”, a TV não foi encontrada na rede.</p><p><b>Sem Cast:</b> abra o Hub no navegador da TV e conecte em Configurações → Dispositivos. Ela passa a aparecer em “Aparelhos do Hub” e recebe a reprodução com a música, a posição e o estado.</p></details>`;
