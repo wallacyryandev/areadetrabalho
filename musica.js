@@ -17,6 +17,8 @@ let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],D
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0;
 /* estado do painel de aparelhos */
 let DSO=0,dsF=null,XS={},XE={};
+/* estado da tela "Tocando agora" */
+let NPO=0,NF=null;
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
 const APP='Hub Pessoal';
@@ -45,6 +47,7 @@ const I={
   dev:sv_('M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm0 18H7V5h10v14z'),
   check:sv_('M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'),
   home:sv_('M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'),
+  chevd:sv_('M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z'),
   /* ícone "Conectar a um aparelho" (tela + alto-falante), desenhado em traço */
   devs:'<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6"/><rect x="13" y="12" width="8" height="9" rx="1.6"/><circle cx="17" cy="17.2" r="1.7"/><path d="M8 20h4"/></svg>'
 };
@@ -62,6 +65,7 @@ const draw=()=>{
   const a=document.activeElement,id=a&&a.id,ss=a&&a.selectionStart;
   render();
   if(DSO)dsUpd();
+  if(NPO)npUpd();
   if(id&&id.indexOf('mu-q')==0){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(ss,ss)}catch(e){}}}
 };
 const isAudio=f=>f.type.startsWith('audio/')||/\.(mp3|m4a|ogg|wav|flac|aac|opus)$/i.test(f.name);
@@ -73,13 +77,14 @@ const pr=t=>{XF=t;const n=Date.now();if(n-lastX>200){lastX=n;const e=$('#mu-xf')
 const say=m=>{try{typeof toast=='function'&&toast(m)}catch(e){}};
 /* capa colorida gerada pelo nome (cada música/playlist tem a sua cor) */
 const cov=s=>{const h=parseInt(hk(String(s)),36)%360;return'background:linear-gradient(135deg,hsl('+h+',55%,42%),hsl('+((h+45)%360)+',55%,22%))'};
+const hue=s=>parseInt(hk(String(s)),36)%360;
 /* capa da playlist: foto, se tiver; senão a cor gerada */
 const plSt=p=>p.img?'background:#222 url('+p.img+') center/cover no-repeat':cov(p.name);
 
 /* ---- barra de navegação: some na página Música (a engrenagem abre a tela de menu) ---- */
 const _render=render;
 window.render=function(){
-  if(page!='mus'){MENU=0;if(DSO)dsh(0)}
+  if(page!='mus'){MENU=0;if(DSO)dsh(0);if(NPO)nph(0)}
   document.body.classList.toggle('mu-full',page=='mus');
   _render();
 };
@@ -627,7 +632,7 @@ function dsh(v){
   }else{
     if(!DSO)return;
     DSO=0;d.classList.remove('open');d.inert=true;d.setAttribute('aria-hidden','true');
-    document.body.style.overflow='';
+    document.body.style.overflow=NPO?'hidden':'';
     if(dsF&&dsF.focus){try{dsF.focus()}catch(e){}}
   }
 }
@@ -639,6 +644,105 @@ function dsel(k,id){
   else if(k=='sync')syncDev(id);
   else if(k=='pair'){dsh(0);go('cfg')}
 }
+/* ======================================================================
+   TELA "TOCANDO AGORA" (sobe ao tocar no mini player, estilo Spotify)
+   ====================================================================== */
+const NPCSS=`#mu-np{position:fixed;inset:0;z-index:9000;visibility:hidden;pointer-events:none;transition:visibility 0s linear .35s;font-family:inherit;background:#000}
+#mu-np.open{visibility:visible;pointer-events:auto;transition:none}
+#mu-np *{box-sizing:border-box}
+#mu-np .np-sh{position:absolute;top:0;bottom:0;left:0;right:0;max-width:560px;margin:0 auto;background:#121212;color:#fff;overflow-y:auto;overscroll-behavior:contain;padding:0 20px calc(28px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);outline:0}
+#mu-np.open .np-sh{transform:translateY(0)}
+#mu-np .np-sh.drag{transition:none}
+#mu-np svg{width:1em;height:1em;fill:currentColor;flex:none;pointer-events:none;vertical-align:-.125em}
+#mu-np svg.o{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#mu-np button:focus-visible{outline:2px solid #1db954;outline-offset:2px}
+#mu-np .np-gr{display:flex;justify-content:center;padding:12px 0 6px;touch-action:none;cursor:grab}
+#mu-np .np-gr i{width:40px;height:4px;border-radius:2px;background:#ffffff66}
+#mu-np .np-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+#mu-np .np-x{background:none;border:0;color:#fff;font-size:28px;padding:6px;border-radius:50%;cursor:pointer;display:inline-flex}
+#mu-np .np-c{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:2px}
+#mu-np .np-c small{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#ffffffb3}
+#mu-np .np-c b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mu-np .np-spc{width:40px;flex:none}
+#mu-np .np-art{width:min(100%,360px,44vh);aspect-ratio:1;margin:6px auto 24px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:96px;box-shadow:0 16px 40px #0009;color:#ffffffaa}
+#mu-np .np-ti{display:flex;align-items:center;gap:4px}
+#mu-np .np-tt{flex:1;min-width:0}
+#mu-np .np-tt b{display:block;font-size:22px;font-weight:800;overflow-wrap:anywhere}
+#mu-np .np-tt span{color:#ffffffb3;font-size:14px}
+#mu-np .np-ft{display:flex;align-items:center;justify-content:flex-start;margin-top:14px}
+#mu-np .np-h{font-size:18px;font-weight:700;margin:26px 0 8px}
+@media(prefers-reduced-motion:reduce){#mu-np .np-sh{transition:none}}`;
+
+function npQueue(){
+  const p=ctx&&pget(ctx);
+  let h='<div class=np-h>A seguir</div>';
+  if(shuf)return h+'<p class=sp-s>Modo aleatório ligado: a próxima música é sorteada.</p>';
+  const q=qOf(ctx),i=q.indexOf(cur),L=i<0?[]:q.slice(i+1,i+16);
+  if(!L.length)return h+'<p class=sp-s>'+(rep&&q.length>1?'Depois desta, a lista volta ao início.':'Esta é a última música da lista.')+'</p>';
+  return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${cov(T[j].name)}" onclick="MU.qp(${j})">${I.note}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(nm(T[j].name))}</div><p class=sp-s>${p?esc(p.name):esc(APP)}</p></div></div>`).join('');
+}
+function npBody(){
+  const t=T[cur];if(!t)return'';
+  const pl=playing(),p=ctx&&pget(ctx),d=curDur();
+  return`<div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
+<div class=np-art style="${cov(t.name)}">${I.note}</div>
+<div class=np-ti><div class=np-tt><b>${esc(nm(t.name))}</b><span>${esc(APP)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
+${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
+<div class=np-ft>${dbi()}</div>${npQueue()}`;
+}
+function npUpd(){
+  if(!NPO)return;
+  if(RC||cur<0||!T[cur]){nph(0);return}
+  if(seeking)return;
+  const b=document.getElementById('mu-npb'),sh=document.querySelector('#mu-np .np-sh');if(!b||!sh)return;
+  const a=document.activeElement,L=[...b.querySelectorAll('button,input,[role=button]')],fi=a&&b.contains(a)?L.indexOf(a):-1;
+  sh.style.background='linear-gradient(180deg,hsl('+hue(T[cur].name)+',45%,30%) 0,#121212 78%) #121212';
+  b.innerHTML=npBody();
+  if(fi>=0){const n=[...b.querySelectorAll('button,input,[role=button]')][fi];if(n)n.focus()}
+}
+function npMount(){
+  if(document.getElementById('mu-np'))return;
+  const st=document.createElement('style');st.textContent=NPCSS;document.head.appendChild(st);
+  const d=document.createElement('div');d.id='mu-np';d.inert=true;d.setAttribute('aria-hidden','true');
+  d.innerHTML=`<div class=np-sh role=dialog aria-modal=true aria-label="Tocando agora" tabindex=-1><div class=np-gr id=mu-npg><i></i></div><div id=mu-npb></div></div>`;
+  document.body.appendChild(d);
+  d.addEventListener('keydown',e=>{
+    if(e.key=='Escape'){e.preventDefault();nph(0);return}
+    if(e.key!='Tab')return;
+    const f=[...d.querySelectorAll('button:not(:disabled),input,[role=button]')];if(!f.length)return;
+    const a=f[0],z=f[f.length-1],ac=document.activeElement,sh=d.querySelector('.np-sh');
+    if(e.shiftKey&&(ac===a||ac===sh)){e.preventDefault();z.focus()}
+    else if(!e.shiftKey&&ac===z){e.preventDefault();a.focus()}
+  });
+  /* arrastar a alça para baixo minimiza */
+  const sh=d.querySelector('.np-sh'),g=d.querySelector('#mu-npg');let y0=null,dy=0;
+  g.addEventListener('pointerdown',e=>{y0=e.clientY;dy=0;sh.classList.add('drag');try{g.setPointerCapture(e.pointerId)}catch(x){}});
+  g.addEventListener('pointermove',e=>{if(y0==null)return;dy=Math.max(0,e.clientY-y0);sh.style.transform='translateY('+dy+'px)'});
+  const end=()=>{if(y0==null)return;y0=null;sh.classList.remove('drag');sh.style.transform='';if(dy>110)nph(0);dy=0};
+  g.addEventListener('pointerup',end);g.addEventListener('pointercancel',end);
+}
+function nph(v){
+  npMount();
+  const d=document.getElementById('mu-np');if(!d)return;
+  if(v){
+    if(NPO||cur<0||!T[cur]||RC)return;
+    NF=document.activeElement;NPO=1;
+    d.inert=false;d.setAttribute('aria-hidden','false');
+    npUpd();
+    void d.offsetHeight;
+    d.classList.add('open');
+    document.body.style.overflow='hidden';
+    setTimeout(()=>{const s=d.querySelector('.np-sh');if(s&&NPO&&!DSO)s.focus()},60);
+  }else{
+    if(!NPO)return;
+    NPO=0;d.classList.remove('open');d.inert=true;d.setAttribute('aria-hidden','true');
+    document.body.style.overflow=DSO?'hidden':'';
+    if(NF&&NF.focus){try{NF.focus()}catch(e){}}
+  }
+}
+/* renomear / adicionar à playlist: minimiza a tela para o formulário aparecer por cima */
+function npa(a){const i=cur;nph(0);if(i<0)return;setTimeout(()=>a=='ren'?ren(i):addTo(i),150)}
+
 /* rótulos do botão de aparelhos no player */
 const dlabel=()=>RC?dev(RC).name:'Este aparelho';
 const dbtn=()=>`<div class=sp-dvr><button class="sp-dvb${RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho. Aparelho atual: ${esc(dlabel())}">${I.devs}<span>${esc(dlabel())}</span></button></div>`;
@@ -698,7 +802,7 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-bot{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#121212;box-shadow:0 -8px 24px #000c}
 .sp-bi{max-width:720px;margin:0 auto}
 .sp-mini{position:relative;margin:8px 8px 4px;background:#282828;border-radius:10px;padding:8px 10px 12px;display:flex;align-items:center;gap:6px}
-.sp-mini .sp-i,.sp-mini .sp-cv{cursor:default}
+.sp-mini .sp-i,.sp-mini .sp-cv{cursor:pointer}
 .sp-mini .sp-cv{width:40px;height:40px}
 .sp-mini .sp-dvb{padding:6px 8px;font-size:12px;max-width:130px}
 .sp-nav{display:flex;border-top:1px solid #242424;padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -737,7 +841,7 @@ function ban(){
 /* Mini player (barra fixa de baixo, em todas as abas) */
 function mini(){
   const t=cur>=0&&T[cur],pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${t?cov(t.name):'background:#2a2a2a'}">${I.note}</div><div class=sp-i><div class=sp-n>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s>${esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  return`<div class=sp-mini><div class=sp-cv style="${t?cov(t.name):'background:#2a2a2a'}" onclick="MU.nph(1)">${I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s>${esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
 /* Barra de navegação do Música (fixa embaixo) */
 const bnav=()=>`<div class=sp-nav>${[['home','Início',I.home],['lib','Músicas',I.note],['pls','Playlists',I.list],['dev','Aparelhos',I.dev]].map(a=>`<button class="sp-nb${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')"${TAB==a[0]?' aria-current=page':''}>${a[2]}<span>${a[1]}</span></button>`).join('')}</div>`;
@@ -896,6 +1000,7 @@ return{
   take,dp(){DUP=!DUP;draw()},rx:rmExact,
   back(){take(RC)},
   sy:syncDev,
-  dsh,dsel
+  dsh,dsel,nph,npa,
+  qp(i){play(i,1,ctx)}
 };
 })();
