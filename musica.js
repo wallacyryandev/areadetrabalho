@@ -3,17 +3,27 @@
    + troca de músicas entre aparelhos conectados e controle remoto (estilo Spotify Connect).
    Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js.
 
-   NOVO nesta versão:
-   - Renomear música (biblioteca e "Tocando agora"). Atualiza as playlists e os aparelhos conectados.
-   - Foto (capa) nas playlists: aba Playlists > abrir a playlist > "Adicionar foto".
-   - Emojis dos botões trocados por ícones desenhados (SVG).
-   - Na página Música a barra de navegação some; o botão de engrenagem (canto superior direito)
-     abre uma tela própria (estilo configurações do Spotify) com o perfil e a lista de páginas. */
+   Versão anterior: renomear música, foto nas playlists, ícones SVG, tela de menu pela engrenagem.
+
+   NOVO nesta versão (seletor de aparelhos, estilo Spotify Connect):
+   - Ícone de aparelhos no player ("Tocando agora", mini player e controle remoto) abre um painel inferior
+     (bottom sheet) escuro com: este aparelho, aparelhos do Hub (conectados pelo "Conectar dispositivo")
+     e aparelhos Google Cast (Chromecast, Google TV e TVs com Cast embutido, inclusive Samsung 2026).
+   - Aparelhos do Hub: tocar neles TRANSFERE a reprodução (mesma música, mesma posição, mesmo estado).
+   - Google Cast (Cast Sender SDK): o Chrome mostra o seletor nativo; ao conectar, a reprodução do celular
+     passa para o aparelho e o player daqui vira controle remoto (play/pausa, próxima, anterior, posição, volume).
+   - ATENÇÃO (Cast): o aparelho Cast baixa o arquivo de uma URL pública. As músicas ficam só no celular
+     (IndexedDB), então os mesmos arquivos precisam estar hospedados em HTTPS com CORS
+     (padrão: pasta "musicas/" ao lado do index.html; dá para mudar no painel). Veja o README entregue.
+   - CAST_APP: 'CC1AD845' = Default Media Receiver. Troque pelo App ID do seu receptor personalizado
+     (cast-receiver.html) se quiser a tela de "Tocando agora" com a cara do Hub. */
 const MU=(()=>{
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
 let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0;
+/* estado do Google Cast e do painel de aparelhos */
+let CA={sdk:'idle',cs:'',on:0,name:'',app:'',k:null,busy:0,req:0,err:'',pl:null,ct:null,seq:0,lp:0,fin:null},DSO=0,dsF=null,XS={},XE={};
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
 const APP='Hub Pessoal';
@@ -39,7 +49,12 @@ const I={
   vlo:sv_('M3 9v6h4l5 5V4L7 9H3z'),
   chev:sv_('M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z'),
   back:sv_('M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z'),
-  dev:sv_('M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm0 18H7V5h10v14z')
+  dev:sv_('M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm0 18H7V5h10v14z'),
+  cast:sv_('M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z'),
+  tv:sv_('M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z'),
+  check:sv_('M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'),
+  /* ícone "Conectar a um aparelho" (tela + alto-falante), desenhado em traço */
+  devs:'<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6"/><rect x="13" y="12" width="8" height="9" rx="1.6"/><circle cx="17" cy="17.2" r="1.7"/><path d="M8 20h4"/></svg>'
 };
 
 /* ---- armazenamento local (IndexedDB) ---- */
@@ -54,6 +69,7 @@ const draw=()=>{
   if(typeof page=='undefined'||page!='mus')return;
   const a=document.activeElement,id=a&&a.id,ss=a&&a.selectionStart;
   render();
+  if(DSO)dsUpd();
   if(id&&id.indexOf('mu-q')==0){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(ss,ss)}catch(e){}}}
 };
 const isAudio=f=>f.type.startsWith('audio/')||/\.(mp3|m4a|ogg|wav|flac|aac|opus)$/i.test(f.name);
@@ -71,7 +87,7 @@ const plSt=p=>p.img?'background:#222 url('+p.img+') center/cover no-repeat':cov(
 /* ---- barra de navegação: some na página Música (a engrenagem abre a tela de menu) ---- */
 const _render=render;
 window.render=function(){
-  if(page!='mus')MENU=0;
+  if(page!='mus'){MENU=0;if(DSO)dsh(0)}
   document.body.classList.toggle('mu-full',page=='mus');
   _render();
 };
@@ -109,17 +125,30 @@ const openConns=()=>syOk()?Object.values(SY._conns()).filter(c=>c.open&&c.hid):[
 const dev=id=>(syOk()?SY._c().links:[]).find(l=>l.id==id)||{icon:'',name:'Outro aparelho'};
 const sendJ=(c,o)=>{try{c.send(JSON.stringify(o))}catch(e){}};
 
+/* ---- reprodução unificada: vale para este aparelho OU para o aparelho Cast conectado ---- */
+const cOn=()=>!!(CA.on&&CA.sdk=='ready'&&CA.pl);
+const cLive=()=>cOn()&&cur>=0&&!!T[cur]&&CA.k===key(T[cur]);
+const cPlaying=()=>!!CA.pl&&(CA.pl.playerState=='PLAYING'||CA.pl.playerState=='BUFFERING');
+const playing=()=>cur>=0&&(cOn()?(cLive()&&cPlaying()):!el.paused);
+const curPos=()=>cOn()?(cLive()?CA.pl.currentTime||0:0):(el.currentTime||0);
+const curDur=()=>cOn()?(cLive()?CA.pl.duration||0:0):(isFinite(el.duration)?el.duration:0);
+const curVol=()=>cOn()?(CA.pl.volumeLevel==null?1:CA.pl.volumeLevel):el.volume;
+const resumeNow=()=>{if(cOn()){if(!cPlaying()){cLive()&&CA.pl.playerState!='IDLE'?CA.ct.playOrPause():castLoadM(cur,1,0)}}else playEl()};
+const pauseNow=()=>{if(cOn()){if(cPlaying())CA.ct.playOrPause()}else el.pause()};
+const seekTo=v=>{v=+v;if(cOn()){if(cLive()){CA.pl.currentTime=v;CA.ct.seek()}}else{el.currentTime=v;msPos()}};
+const setVol=v=>{v=Math.max(0,Math.min(1,+v));if(cOn()){CA.pl.volumeLevel=v;CA.ct.setVolumeLevel()}else el.volume=v};
+
 /* ---- reprodução local ---- */
 const playEl=()=>el.play().catch(e=>{if(e&&e.name=='NotAllowedError'){blocked=1;bcast()}});
-function play(i,auto=1,c,back){
+function play(i,auto=1,c,back,pos){
   if(i<0||i>=T.length)return;
   if(c!==undefined){if(c!==ctx)seen.clear();ctx=c}
   if(!back&&cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
   seen.add(key(T[i]));
   cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});
-  setSrc(el,T[i].blob);
   msMeta(i);
-  if(auto)playEl();
+  if(cOn()){killEl(el);if(auto)castLoadM(i,1,pos||0);else CA.k=null}
+  else{setSrc(el,T[i].blob);if(auto)playEl()}
   draw();
 }
 const nextI=d=>{
@@ -132,8 +161,8 @@ const nextI=d=>{
   const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length];
 };
 const next=()=>{const n=nextI(1);if(n>=0)play(n)};
-const prev=()=>{if(el.currentTime>3)el.currentTime=0;else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
-function toggle(){if(cur<0){if(T.length)play(0);return}el.paused?playEl():el.pause()}
+const prev=()=>{if(curPos()>3)seekTo(0);else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
+function toggle(){if(cur<0){if(T.length)play(0);return}playing()?pauseNow():resumeNow()}
 
 /* ---- troca de música sem pausa ---- */
 function killEl(a){try{a.pause()}catch(e){}a.removeAttribute('src');try{a.load()}catch(e){}if(a._u){URL.revokeObjectURL(a._u);a._u=null}}
@@ -141,7 +170,7 @@ function setSrc(a,blob){if(a._u)URL.revokeObjectURL(a._u);a._u=URL.createObjectU
 function dropPre(){if(pre){killEl(pre.a);pre=null}}
 const peek=()=>{const q=qOf(ctx);if(!q.length)return -1;const p=q.indexOf(cur);if(!shuf&&p>=q.length-1&&!rep)return -1;return nextI(1)};
 function prep(){
-  if(pre||cur<0||RC)return;
+  if(pre||cur<0||RC||cOn())return;
   const i=peek();if(i<0||i>=T.length)return;
   const a=els[0]===el?els[1]:els[0];
   setSrc(a,T[i].blob);a.preload='auto';a.volume=el.volume;
@@ -168,9 +197,9 @@ const on=(ev,fn)=>els.forEach(a=>a.addEventListener(ev,e=>{if(a===el)fn(e);else 
 /* ---- só um aparelho toca por vez ---- */
 function act(){const m=JSON.stringify({t:'mu-act'});openConns().forEach(c=>{try{c.send(m)}catch(e){}})}
 function onAct(c){
-  if(cur<0||el.paused)return;
+  if(cur<0||!playing())return;
   if(Date.now()-myPlayAt<1500&&syOk()&&SY._c().id<c.hid)return;
-  el.pause();
+  pauseNow();
   const d=dev(c.hid);
   say('Agora tocando em '+d.name);
 }
@@ -195,11 +224,11 @@ on('ended',()=>{
 });
 if('mediaSession' in navigator){
   const ms=navigator.mediaSession,h=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
-  h('play',()=>playEl());
-  h('pause',()=>el.pause());
+  h('play',()=>resumeNow());
+  h('pause',()=>pauseNow());
   h('nexttrack',next);
   h('previoustrack',prev);
-  h('seekto',d=>{if(d&&d.seekTime!=null){el.currentTime=d.seekTime;msPos()}});
+  h('seekto',d=>{if(d&&d.seekTime!=null)seekTo(d.seekTime)});
 }
 
 /* ---- biblioteca local ---- */
@@ -216,7 +245,7 @@ async function add(files){
 async function del(i){
   if(!confirm('Remover "'+nm(T[i].name)+'" deste aparelho?'))return;
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
-  dropPre();if(i==cur){killEl(el);cur=-1}
+  dropPre();if(i==cur){if(cOn()){try{CA.ct.stop()}catch(e){}}killEl(el);cur=-1}
   else if(i<cur)cur--;
   T.splice(i,1);KM=null;hist=[];draw();bls();
 }
@@ -231,6 +260,7 @@ async function applyRen(i,name,remote){
   const had=seen.delete(old);
   t.name=name;KM=null;
   const nk=key(t);if(had)seen.add(nk);
+  if(CA.k===old)CA.k=nk;
   if(!remote)openConns().forEach(c=>sendJ(c,{t:'mu-rn',ok:old,name,size:t.size}));
   PL.forEach(p=>{
     const j=p.keys.indexOf(old);if(j<0)return;
@@ -275,7 +305,7 @@ function setImg(id,f){
 function noImg(id){const p=pget(id);if(!p)return;p.img='';touch(p);draw()}
 
 /* ---- estado enviado aos outros aparelhos (controle remoto) ---- */
-const stNow=()=>({t:'mu-st',p:cur>=0&&!el.paused?1:0,i:cur,n:cur>=0&&T[cur]?nm(T[cur].name):'',pos:el.currentTime||0,dur:isFinite(el.duration)?el.duration:0,v:el.volume,sh:+shuf,rp:+rep,b:blocked});
+const stNow=()=>({t:'mu-st',p:playing()?1:0,i:cur,n:cur>=0&&T[cur]?nm(T[cur].name):'',pos:curPos(),dur:curDur(),v:curVol(),sh:+shuf,rp:+rep,b:blocked});
 const lsNow=()=>({t:'mu-ls',names:T.slice(0,150).map(x=>nm(x.name).slice(0,50))});
 function bcast(){
   lastB=Date.now();
@@ -326,6 +356,8 @@ function onData(c,d){
   else if(m.t=='mu-cmd')exec(m.a,m.v);
   else if(m.t=='mu-pl')onPl(c,m.p);
   else if(m.t=='mu-rn')onRn(m);
+  else if(m.t=='mu-go')onGo(c,m);
+  else if(m.t=='mu-gf'){XE[id]='Esse aparelho não tem a música "'+String(m.n||'')+'". Use "Sincronizar" e tente de novo.';delete XS[id];if(RC==id)RC=null;draw();dsUpd()}
   else if(m.t=='mu-man')onMan(c,m);
   else if(m.t=='mu-f'){c._rx=c._rx||{};c._rx[m.tid]={name:m.name,size:m.size,type:m.type,parts:[],got:0,skip:T.some(x=>key(x)==hk(m.name+'|'+m.size))}}
   else if(m.t=='mu-e')endRx(c,m.tid);
@@ -369,8 +401,8 @@ async function sendFiles(c,list){
 
 /* ---- controle remoto ---- */
 function exec(a,v){
-  if(a=='tg')toggle();else if(a=='ps')el.pause();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v,1,null);
-  else if(a=='sk')el.currentTime=+v;else if(a=='vol')el.volume=Math.max(0,Math.min(1,+v));
+  if(a=='tg')toggle();else if(a=='ps')pauseNow();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='pl')play(+v,1,null);
+  else if(a=='sk')seekTo(+v);else if(a=='vol')setVol(v);
   else if(a=='sh'){shuf=!shuf;seen.clear();dropPre()}else if(a=='rp'){rep=!rep;dropPre()}
   draw();sched();
 }
@@ -404,8 +436,8 @@ function take(id){
     const p=rpos(r);
     if(c)sendJ(c,{t:'mu-cmd',a:'ps'});
     RC=null;
-    play(i,1,null);
-    el.addEventListener('loadedmetadata',()=>{try{el.currentTime=p}catch(e){}},{once:true});
+    play(i,1,null,0,p);
+    if(!cOn())el.addEventListener('loadedmetadata',()=>{try{el.currentTime=p}catch(e){}},{once:true});
     return;
   }
   if(c)sendJ(c,{t:'mu-cmd',a:'ps'});
@@ -453,6 +485,366 @@ ${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k
 ${G.length>100?`<p class=sp-s style="margin-top:10px">Mostrando 100 de ${G.length} grupos. Remova alguns para ver o resto.</p>`:''}</div>`;
 }
 
+/* ======================================================================
+   GOOGLE CAST (Cast Sender SDK)
+   - O navegador NÃO entrega a lista de aparelhos Cast ao site. O Chrome só informa se existe algum
+     aparelho disponível (castState) e mostra o seletor NATIVO quando chamamos requestSession().
+   - O aparelho Cast baixa a música de uma URL pública (HTTPS + CORS). Um blob: do celular não serve.
+   ====================================================================== */
+const CAST_APP='CC1AD845'; /* Default Media Receiver. Troque pelo App ID do seu receptor personalizado */
+const castBase=()=>{let b='';try{b=localStorage.getItem('hub_cast_base')||''}catch(e){}if(!b){try{b=new URL('musicas/',location.href).href}catch(e){b=''}}return b&&b.slice(-1)!='/'?b+'/':b};
+const castUrl=t=>castBase()+encodeURIComponent(t.name);
+const MIME={mp3:'audio/mpeg',m4a:'audio/mp4',aac:'audio/aac',ogg:'audio/ogg',opus:'audio/ogg',wav:'audio/wav',flac:'audio/flac'};
+const castType=t=>t.blob.type||MIME[(t.name.split('.').pop()||'').toLowerCase()]||'audio/mpeg';
+const castSess=()=>{try{return cast.framework.CastContext.getInstance().getCurrentSession()}catch(e){return null}};
+function castMsg(c){
+  c=String(c||'').toLowerCase();
+  const M={cancel:'',
+    receiver_unavailable:'O aparelho não está disponível. Confira se ele está ligado e na mesma rede Wi‑Fi.',
+    timeout:'O aparelho demorou demais para responder. Tente de novo.',
+    session_error:'A sessão com o aparelho falhou. Tente conectar de novo.',
+    channel_error:'A comunicação com o aparelho foi perdida. Tente de novo.',
+    load_media_failed:'O aparelho não conseguiu abrir a música. Confira se o arquivo está público, em HTTPS e com CORS liberado.',
+    api_not_initialized:'O Google Cast ainda não está pronto. Tente de novo em instantes.',
+    extension_missing:'Este navegador não tem o Google Cast. Use o Chrome.',
+    extension_not_compatible:'O Google Cast deste navegador está desatualizado.'};
+  return c in M?M[c]:(c?'Erro do Google Cast ('+c+').':'');
+}
+function castBoot(){
+  if(CA.sdk=='loading'||CA.sdk=='ready')return;
+  if(!window.isSecureContext){CA.sdk='nosec';dsUpd();return}
+  CA.sdk='loading';dsUpd();
+  window['__onGCastApiAvailable']=ok=>{if(ok)castInit();else{CA.sdk='unsup';dsUpd()}};
+  const s=document.createElement('script');
+  s.src='https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
+  s.async=true;
+  s.onerror=()=>{CA.sdk='err';try{s.remove()}catch(e){}dsUpd()};
+  document.head.appendChild(s);
+  setTimeout(()=>{if(CA.sdk=='loading'){CA.sdk='err';dsUpd()}},12000);
+}
+function castInfo(s){try{CA.name=s.getCastDevice().friendlyName||'';const o=s.getSessionObj();CA.app=(o&&o.displayName)||''}catch(e){}}
+function castInit(){
+  try{
+    const C=cast.framework,cx=C.CastContext.getInstance();
+    cx.setOptions({receiverApplicationId:CAST_APP,autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,resumeSavedSession:true});
+    CA.pl=new C.RemotePlayer();CA.ct=new C.RemotePlayerController(CA.pl);
+    CA.ct.addEventListener(C.RemotePlayerEventType.ANY_CHANGE,castChg);
+    cx.addEventListener(C.CastContextEventType.CAST_STATE_CHANGED,e=>{CA.cs=e.castState;dsUpd();draw()});
+    cx.addEventListener(C.CastContextEventType.SESSION_STATE_CHANGED,castSes);
+    CA.sdk='ready';CA.cs=cx.getCastState();
+    const s=cx.getCurrentSession();if(s){CA.on=1;castInfo(s)}
+  }catch(e){CA.sdk='err';try{console.warn('Cast:',e)}catch(x){}}
+  dsUpd();draw();
+}
+function castSes(e){
+  const S=cast.framework.SessionState,st=e.sessionState;
+  if(st==S.SESSION_STARTED||st==S.SESSION_RESUMED){
+    const s=castSess();CA.on=1;CA.err='';if(s)castInfo(s);
+    try{localStorage.setItem('hub_cast_used','1')}catch(x){}
+    try{console.info('Cast: sessão',CA.name,'| receptor:',CA.app||CAST_APP)}catch(x){}
+    if(RC){cmd('ps');RC=null}
+    if(st==S.SESSION_STARTED){castHand();if(DSO)setTimeout(()=>dsh(0),900)}else castSync();
+  }else if(st==S.SESSION_START_FAILED){
+    CA.on=0;CA.err=castMsg(e.errorCode);if(CA.err)say(CA.err);
+  }else if(st==S.SESSION_ENDED&&CA.on){
+    /* queda da conexão ou aparelho desligado: volta para este aparelho, pausado, na posição que estava */
+    CA.on=0;CA.name='';CA.app='';CA.k=null;CA.busy=0;
+    say('A transmissão foi encerrada.');
+    const t=T[cur],p=CA.lp||0;
+    if(t){setSrc(el,t.blob);el.addEventListener('loadedmetadata',()=>{try{el.currentTime=p}catch(x){}},{once:true})}
+  }
+  dsUpd();draw();bcast();
+}
+/* passa o que está tocando neste aparelho para o aparelho Cast (mesma música, posição e estado) */
+function castHand(){
+  if(cur<0||!T[cur])return;
+  const pos=el.currentTime||0,was=!el.paused;
+  el.pause();
+  castLoadM(cur,was,pos);
+}
+/* sessão retomada (página recarregada): descobre qual música do Hub está tocando no aparelho */
+function castSync(){
+  try{
+    if(cur>=0)return;
+    const mi=CA.pl&&CA.pl.mediaInfo,tt=mi&&mi.metadata&&mi.metadata.title;
+    if(tt){const i=T.findIndex(x=>nm(x.name)==tt);if(i>=0){cur=i;CA.k=key(T[i])}}
+  }catch(e){}
+}
+function castChg(e){
+  if(!CA.on)return;
+  const f=e&&e.field;
+  if(f=='currentTime')return;
+  if(f=='playerState'){
+    const s=castSess(),ms=s&&s.getMediaSession&&s.getMediaSession();
+    if(CA.pl.playerState=='IDLE'&&ms&&ms.idleReason=='FINISHED'&&!CA.busy&&CA.fin!==ms.mediaSessionId){CA.fin=ms.mediaSessionId;castEnded()}
+  }else if(f=='mediaInfo')castSync();
+  draw();sched();
+}
+function castEnded(){
+  const q=qOf(ctx),p=q.indexOf(cur);
+  if(shuf||p<q.length-1)next();
+  else if(rep&&q.length)play(q[0]);
+  else{draw();bcast()}
+}
+async function castProbe(u){
+  try{const r=await fetch(u,{method:'HEAD',cache:'no-store'});return(r.ok&&!/text\/html/i.test(r.headers.get('content-type')||''))||r.status==405}catch(e){return false}
+}
+async function castLoadM(i,auto,pos){
+  const s=castSess(),t=T[i];if(!s||!t)return;
+  const url=castUrl(t),my=++CA.seq;
+  CA.busy=1;CA.err='';CA.k=null;dsUpd();draw();
+  try{
+    if(!await castProbe(url)){
+      if(my!=CA.seq)return;
+      CA.err='Não achei "'+nm(t.name)+'" em '+castBase()+' (ou o CORS está bloqueado). Hospede o arquivo ali com o mesmo nome, ou mude o endereço no painel de aparelhos.';
+      CA.busy=0;say('O aparelho Cast precisa baixar a música de um endereço público.');dsUpd();draw();return;
+    }
+    const mi=new chrome.cast.media.MediaInfo(url,castType(t));
+    mi.streamType=chrome.cast.media.StreamType.BUFFERED;
+    const md=new chrome.cast.media.MusicTrackMediaMetadata();
+    md.title=nm(t.name);md.artist=APP;md.albumName=APP;md.images=[new chrome.cast.Image(ico('icon-512.png'))];
+    mi.metadata=md;
+    const rq=new chrome.cast.media.LoadRequest(mi);
+    rq.autoplay=!!auto;rq.currentTime=pos||0;
+    const er=await s.loadMedia(rq);
+    if(my!=CA.seq)return;
+    if(er)CA.err=castMsg(er);
+    else{CA.k=key(t);if(auto){myPlayAt=Date.now();act()}}
+  }catch(e){if(my!=CA.seq)return;CA.err='Falha ao enviar a música para o aparelho.'}
+  CA.busy=0;dsUpd();draw();bcast();
+}
+/* sai do Cast e volta a tocar neste aparelho (go=1 mantém tocando se estava tocando) */
+function castOut(go){
+  const i=cur,pl=CA.pl,pos=(cLive()?pl.currentTime:CA.lp)||0,was=cLive()&&cPlaying();
+  CA.on=0;CA.name='';CA.app='';CA.k=null;CA.seq++;CA.busy=0;
+  try{cast.framework.CastContext.getInstance().endCurrentSession(true)}catch(e){}
+  if(i>=0&&T[i]){
+    setSrc(el,T[i].blob);
+    el.addEventListener('loadedmetadata',()=>{try{el.currentTime=pos}catch(x){}},{once:true});
+    if(go&&was)playEl();
+  }
+  dsUpd();draw();bcast();
+}
+async function castPick(){
+  if(CA.sdk!='ready'){castBoot();return}
+  CA.err='';CA.req=1;dsUpd();
+  try{
+    const r=await cast.framework.CastContext.getInstance().requestSession();
+    if(r)CA.err=castMsg(r);
+  }catch(e){CA.err='Não foi possível abrir o seletor do Google Cast.'}
+  CA.req=0;dsUpd();
+}
+function castCfg(){
+  dsh(0);
+  fm('Músicas para o Cast',[{k:'u',l:'Endereço (https://…/) da pasta pública com os arquivos',v:castBase(),r:0}],o=>{
+    const u=(o.u||'').trim();
+    if(u&&!/^https:\/\//i.test(u)){say('Use um endereço que comece com https://');return}
+    try{u?localStorage.setItem('hub_cast_base',u):localStorage.removeItem('hub_cast_base')}catch(e){}
+    CA.err='';draw();
+  });
+}
+/* posição/estado do aparelho Cast, atualizados a cada 0,5 s */
+setInterval(()=>{
+  if(!cOn())return;
+  if(cLive())CA.lp=CA.pl.currentTime||0;
+  if(Date.now()-lastB>1000)bcast();
+  if(typeof page=='undefined'||page!='mus'||seeking||RC)return;
+  const p=curPos(),d=curDur(),c=$('#mu-c'),s=$('#mu-s'),mp=$('#mu-mp');
+  if(c)c.textContent=tm(p);
+  if(s){s.max=d||0;s.value=p}
+  if(mp&&d>0)mp.style.width=(p/d*100)+'%';
+},500);
+
+/* ======================================================================
+   PAINEL DE APARELHOS (bottom sheet) + transferência entre aparelhos do Hub
+   ====================================================================== */
+/* transfere a reprodução deste aparelho para outro aparelho do Hub (mesma música, posição e estado) */
+function xfer(id){
+  const c=openConns().find(x=>x.hid==id);
+  if(!c){XE[id]='Esse aparelho está desconectado.';dsUpd();return}
+  delete XE[id];
+  const t=cur>=0?T[cur]:null;
+  if(!t){ctl(id);dsh(0);return}
+  const n=nm(t.name),rn=(R[id]||{}).names;
+  if(rn&&!rn.includes(n.slice(0,50))){XE[id]='A música "'+n+'" não está nesse aparelho. Use "Sincronizar" e tente de novo.';dsUpd();return}
+  const pos=curPos(),was=playing();
+  XS[id]=Date.now();setTimeout(dsUpd,4100);
+  sendJ(c,{t:'mu-go',n,pos,p:was?1:0});
+  if(cOn())castOut(0);else pauseNow();
+  RC=id;TAB='home';draw();dsUpd();
+  setTimeout(()=>{if(DSO)dsh(0)},1000);
+}
+/* o outro aparelho pediu para assumir a reprodução */
+function onGo(c,m){
+  if(!m||!m.n)return;
+  const i=T.findIndex(x=>nm(x.name).slice(0,50)==String(m.n).slice(0,50));
+  if(i<0){sendJ(c,{t:'mu-gf',n:m.n});say('Não tenho "'+m.n+'" aqui. Sincronize as músicas.');return}
+  const p=+m.pos||0;
+  play(i,m.p?1:0,null,0,p);
+  if(!cOn())el.addEventListener('loadedmetadata',()=>{try{el.currentTime=p}catch(e){}},{once:true});
+}
+function ctl(id){if(cOn())castOut(0);else pauseNow();RC=id;draw()}
+function syncDev(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');say('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
+
+const DSCSS=`#mu-ds{position:fixed;inset:0;z-index:9999;visibility:hidden;pointer-events:none;transition:visibility 0s linear .35s;font-family:inherit}
+#mu-ds.open{visibility:visible;pointer-events:auto;transition:none}
+#mu-ds *{box-sizing:border-box}
+#mu-ds .bk{position:absolute;inset:0;background:rgba(0,0,0,.6);opacity:0;transition:opacity .3s ease}
+#mu-ds.open .bk{opacity:1}
+#mu-ds .sh{position:absolute;left:0;right:0;bottom:0;max-width:560px;margin:0 auto;max-height:86vh;max-height:86dvh;overflow-y:auto;overscroll-behavior:contain;background:#121212;color:#fff;border-radius:20px 20px 0 0;box-shadow:0 -12px 40px rgba(0,0,0,.6);padding:0 14px calc(18px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);outline:0}
+#mu-ds.open .sh{transform:translateY(0)}
+#mu-ds .sh.drag{transition:none}
+#mu-ds .gr{display:flex;justify-content:center;padding:10px 0 6px;touch-action:none;cursor:grab;position:sticky;top:0;background:#121212;z-index:1}
+#mu-ds .gr i{width:40px;height:4px;border-radius:2px;background:#5a5a5a}
+#mu-ds .hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 2px 8px}
+#mu-ds h2{font-size:18px;font-weight:800;margin:0}
+#mu-ds svg{width:1em;height:1em;fill:currentColor;flex:none;pointer-events:none}
+#mu-ds svg.o{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#mu-ds .x{background:none;border:0;color:#b3b3b3;font-size:22px;padding:8px;border-radius:50%;cursor:pointer;display:inline-flex}
+#mu-ds .x:hover{color:#fff}
+#mu-ds button:focus-visible,#mu-ds summary:focus-visible{outline:2px solid #1db954;outline-offset:2px}
+#mu-ds .ds-h2{color:#b3b3b3;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin:18px 4px 6px}
+#mu-ds .ds-r{display:flex;align-items:center;gap:6px;border-radius:12px;margin-bottom:4px}
+#mu-ds .ds-r:hover{background:#1f1f1f}
+#mu-ds .ds-r.on{background:#16261c}
+#mu-ds .ds-m{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:0;color:inherit;font:inherit;text-align:left;padding:10px;border-radius:12px;cursor:pointer;min-height:56px}
+#mu-ds .ds-m:disabled{cursor:default;opacity:.7}
+#mu-ds .ds-r.off .ds-m{opacity:.55}
+#mu-ds .ds-ic{width:40px;height:40px;border-radius:50%;background:#2a2a2a;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none;color:#fff}
+#mu-ds .ds-r.on .ds-ic{background:#1db954;color:#000}
+#mu-ds .ds-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#mu-ds .ds-t b{font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mu-ds .ds-r.on .ds-t b{color:#1db954}
+#mu-ds .ds-t small{color:#b3b3b3;font-size:12.5px;line-height:1.35}
+#mu-ds .ds-b{background:transparent;color:#fff;border:0;box-shadow:inset 0 0 0 1px #727272;border-radius:999px;padding:7px 13px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;white-space:nowrap}
+#mu-ds .ds-b:hover{box-shadow:inset 0 0 0 1px #fff}
+#mu-ds .ds-ck{color:#1db954;font-size:22px;display:inline-flex}
+#mu-ds .ds-eq{display:inline-flex;align-items:flex-end;gap:2px;height:16px;width:18px;flex:none}
+#mu-ds .ds-eq i{flex:1;background:#1db954;border-radius:1px;animation:ds-eq 1s ease-in-out infinite;height:30%}
+#mu-ds .ds-eq i:nth-child(2){animation-delay:-.4s}
+#mu-ds .ds-eq i:nth-child(3){animation-delay:-.75s}
+@keyframes ds-eq{0%,100%{height:25%}50%{height:100%}}
+#mu-ds .ds-spin{width:20px;height:20px;border:2px solid #444;border-top-color:#1db954;border-radius:50%;animation:ds-sp .8s linear infinite;flex:none}
+@keyframes ds-sp{to{transform:rotate(360deg)}}
+#mu-ds .ds-e{color:#ff6b6b;font-size:13px;margin:2px 10px 8px;line-height:1.4}
+#mu-ds .ds-n{color:#b3b3b3;font-size:13px;margin:4px 10px 8px;line-height:1.4}
+#mu-ds .ds-hp{margin-top:16px;border-top:1px solid #2a2a2a;padding-top:10px;font-size:13px;color:#b3b3b3}
+#mu-ds .ds-hp summary{cursor:pointer;font-weight:700;color:#fff;padding:6px 4px}
+#mu-ds .ds-hp p{margin:6px 4px;line-height:1.5}
+#mu-ds code{background:#2a2a2a;border-radius:4px;padding:1px 5px;word-break:break-all;color:#fff}
+@media(prefers-reduced-motion:reduce){#mu-ds .sh,#mu-ds .bk{transition:none}#mu-ds .ds-eq i,#mu-ds .ds-spin{animation-duration:2.5s}}`;
+
+const DSHELP=`<details class=ds-hp><summary>Como conectar a TV Samsung</summary><p><b>Google Cast:</b> TVs Samsung de 2026 (e algumas anteriores, após atualização) têm Google Cast embutido, e Chromecast/Google TV ligados à TV também servem. Se o painel mostrar “Escolher aparelho Cast”, toque nele e escolha a TV na lista do Chrome. Se mostrar “Procurando…”, a TV não foi encontrada na rede.</p><p><b>Sem Cast:</b> abra o Hub no navegador da TV e conecte em Configurações → Dispositivos. Ela passa a aparecer em “Aparelhos do Hub” e recebe a reprodução com a música, a posição e o estado.</p></details>`;
+
+const dsRow=o=>{
+  const ind=o.busy?'<span class=ds-spin role=status aria-label="Aguarde"></span>':o.on?(o.eq?'<span class=ds-eq aria-hidden=true><i></i><i></i><i></i></span>':'<span class=ds-ck aria-hidden=true>'+I.check+'</span>'):'';
+  return`<div class="ds-r${o.on?' on':''}${o.dis?' off':''}"><button class=ds-m data-k="${o.k}" ${o.dis?'disabled':''} ${o.on?'aria-current=true':''} onclick="${o.fn||''}"><span class=ds-ic>${o.ic}</span><span class=ds-t><b>${esc(o.n)}</b><small>${o.s||''}</small></span>${ind}</button>${o.x||''}</div>`;
+};
+function dsHub(){
+  const ln=syOk()?SY._c().links:[],oc=openConns();
+  const ids=[...new Set([...ln.map(l=>l.id),...oc.map(c=>c.hid)])];
+  let h='<div class=ds-h2>Aparelhos do Hub</div>';
+  if(!ids.length)return h+'<div class=ds-n>Nenhum aparelho do Hub conectado.</div><button class=ds-b data-k=pair style="margin-left:10px" onclick="MU.dsel(\'pair\')">Conectar aparelho</button>';
+  ids.forEach(id=>{
+    const d=dev(id),open=oc.some(c=>c.hid==id),st=R[id]&&R[id].st,on=open&&RC==id;
+    const rp=!!(open&&st&&st.p&&R[id].at&&Date.now()-R[id].at<15000);
+    const busy=open&&!!XS[id]&&Date.now()-XS[id]<4000&&!rp;
+    h+=dsRow({k:'hub:'+id,on,eq:on&&rp,busy,dis:!open,ic:I.dev,n:d.name,
+      s:!open?'Desconectado — abra o Hub nesse aparelho':busy?'Transferindo…':rp?'Tocando agora':on?'Controlando':'Disponível — toque para transferir a reprodução',
+      fn:"MU.dsel('hub','"+id+"')",
+      x:open?'<button class=ds-b data-k="sy:'+id+'" onclick="MU.dsel(\'sync\',\''+id+'\')">Sincronizar</button>':''});
+    if(XE[id])h+='<p class=ds-e role=alert>'+esc(XE[id])+'</p>';
+  });
+  return h;
+}
+function dsCast(){
+  let h='<div class=ds-h2>Google Cast</div>';
+  if(CA.on){
+    const pl=playing();
+    h+=dsRow({k:'cast',on:1,eq:pl&&!CA.busy,busy:CA.busy,ic:I.tv,n:CA.name||'Aparelho Cast',
+      s:CA.busy?'Enviando a música…':(pl?'Transmitindo agora':'Conectado')+(CA.app?' · '+esc(CA.app):''),
+      x:'<button class=ds-b data-k=castx onclick="MU.dsel(\'local\')">Desconectar</button>'});
+  }else if(CA.sdk=='nosec')h+='<div class=ds-n>O Google Cast só funciona em páginas HTTPS. Abra o Hub por um endereço https://.</div>';
+  else if(CA.sdk=='unsup')h+='<div class=ds-n>Este navegador não suporta o Google Cast. Use o Chrome (Android ou computador).</div>';
+  else if(CA.sdk=='err')h+=dsRow({k:'cast',ic:I.cast,n:'Não foi possível carregar o Google Cast',s:'Verifique a internet e tente de novo.',fn:"MU.dsel('retry')",x:''});
+  else if(CA.sdk!='ready')h+=dsRow({k:'cast',busy:1,dis:1,ic:I.cast,n:'Carregando Google Cast…',s:'Preparando a busca por aparelhos'});
+  else if(CA.req||CA.cs=='CONNECTING')h+=dsRow({k:'cast',busy:1,dis:1,ic:I.cast,n:'Conectando…',s:'Aguardando o aparelho responder'});
+  else if(CA.cs=='NOT_CONNECTED')h+=dsRow({k:'cast',ic:I.cast,n:'Escolher aparelho Cast',s:'Há aparelhos disponíveis na sua rede. Toque para ver a lista.',fn:"MU.dsel('cast')"});
+  else h+=dsRow({k:'cast',busy:1,dis:1,ic:I.cast,n:'Procurando aparelhos…',s:'Nenhum aparelho Cast encontrado ainda. Deixe o celular e o aparelho na mesma rede Wi‑Fi e confira se o aparelho está ligado.'});
+  if(CA.err)h+='<p class=ds-e role=alert>'+esc(CA.err)+'</p>';
+  if(CA.sdk=='ready')h+='<div class=ds-n>As músicas são baixadas pelo aparelho Cast de <code>'+esc(castBase())+'</code> <button class=ds-b data-k=base style="margin:6px 0 0" onclick="MU.dsel(\'base\')">Alterar endereço</button></div>';
+  return h;
+}
+function dsBody(){
+  const pl=playing(),loc=!CA.on&&!RC,t=cur>=0&&T[cur];
+  return dsRow({k:'local',on:loc,eq:loc&&pl,ic:I.dev,n:'Este aparelho',s:loc?(t?(pl?'Tocando agora':'Pausado'):'Pronto para tocar'):'Tocar neste aparelho',fn:"MU.dsel('local')"})+dsHub()+dsCast()+DSHELP;
+}
+function dsUpd(){
+  if(!DSO)return;
+  const b=document.getElementById('mu-dsb');if(!b)return;
+  const f=document.activeElement,k=f&&b.contains(f)?f.getAttribute('data-k'):null,open=b.querySelector('details[open]');
+  b.innerHTML=dsBody();
+  if(open){const d=b.querySelector('details');if(d)d.open=true}
+  if(k){const n=b.querySelector('[data-k="'+k+'"]');if(n)n.focus()}
+}
+function dsMount(){
+  if(document.getElementById('mu-ds'))return;
+  const st=document.createElement('style');st.textContent=DSCSS;document.head.appendChild(st);
+  const d=document.createElement('div');d.id='mu-ds';d.inert=true;d.setAttribute('aria-hidden','true');
+  d.innerHTML=`<div class=bk onclick="MU.dsh(0)"></div><div class=sh role=dialog aria-modal=true aria-labelledby=mu-dst tabindex=-1><div class=gr id=mu-dsg><i></i></div><div class=hd><h2 id=mu-dst>Conectar a um aparelho</h2><button class=x onclick="MU.dsh(0)" aria-label="Fechar">${I.x}</button></div><div id=mu-dsb></div></div>`;
+  document.body.appendChild(d);
+  d.addEventListener('keydown',e=>{
+    if(e.key=='Escape'){e.preventDefault();dsh(0);return}
+    if(e.key!='Tab')return;
+    const f=[...d.querySelectorAll('button:not(:disabled),summary')];if(!f.length)return;
+    const a=f[0],z=f[f.length-1],ac=document.activeElement,sh=d.querySelector('.sh');
+    if(e.shiftKey&&(ac===a||ac===sh)){e.preventDefault();z.focus()}
+    else if(!e.shiftKey&&ac===z){e.preventDefault();a.focus()}
+  });
+  /* arrastar a alça para baixo fecha o painel */
+  const sh=d.querySelector('.sh'),g=d.querySelector('#mu-dsg');let y0=null,dy=0;
+  g.addEventListener('pointerdown',e=>{y0=e.clientY;dy=0;sh.classList.add('drag');try{g.setPointerCapture(e.pointerId)}catch(x){}});
+  g.addEventListener('pointermove',e=>{if(y0==null)return;dy=Math.max(0,e.clientY-y0);sh.style.transform='translateY('+dy+'px)'});
+  const end=()=>{if(y0==null)return;y0=null;sh.classList.remove('drag');sh.style.transform='';if(dy>90)dsh(0);dy=0};
+  g.addEventListener('pointerup',end);g.addEventListener('pointercancel',end);
+}
+function dsh(v){
+  dsMount();
+  const d=document.getElementById('mu-ds');if(!d)return;
+  if(v){
+    if(DSO)return;
+    dsF=document.activeElement;DSO=1;
+    d.inert=false;d.setAttribute('aria-hidden','false');
+    dsUpd();castBoot();
+    void d.offsetHeight;
+    d.classList.add('open');
+    document.body.style.overflow='hidden';
+    setTimeout(()=>{const s=d.querySelector('.sh');if(s&&DSO)s.focus()},60);
+  }else{
+    if(!DSO)return;
+    DSO=0;d.classList.remove('open');d.inert=true;d.setAttribute('aria-hidden','true');
+    document.body.style.overflow='';
+    if(dsF&&dsF.focus){try{dsF.focus()}catch(e){}}
+  }
+}
+function dsel(k,id){
+  if(k=='local'){
+    if(CA.on)castOut(1);
+    else if(RC)take(RC);
+    setTimeout(()=>{if(DSO)dsh(0)},500);
+  }else if(k=='hub')xfer(id);
+  else if(k=='cast')castPick();
+  else if(k=='retry'){CA.sdk='idle';castBoot()}
+  else if(k=='base')castCfg();
+  else if(k=='sync')syncDev(id);
+  else if(k=='pair'){dsh(0);go('cfg')}
+}
+/* rótulos do botão de aparelhos no player */
+const dlabel=()=>RC?dev(RC).name:CA.on?(CA.name||'Google Cast'):'Este aparelho';
+const dbtn=()=>`<div class=sp-dvr><button class="sp-dvb${CA.on||RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho. Aparelho atual: ${esc(dlabel())}">${I.devs}<span>${esc(dlabel())}</span></button></div>`;
+const dbi=()=>`<button class="sp-ib${CA.on||RC?' on':''}" onclick="MU.dsh(1)" aria-haspopup=dialog aria-label="Conectar a um aparelho" title="Conectar a um aparelho">${I.devs}</button>`;
+const cerr=()=>CA.err?`<p class=sp-warn role=alert>${esc(CA.err)}</p>`:'';
+
 /* ---- estilo (tema escuro estilo Spotify) ---- */
 const CSS=`<style>
 body.mu-full nav{display:none}
@@ -460,6 +852,8 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp{background:#121212;color:#fff;border-radius:16px;padding:16px 14px 14px;min-height:60vh}
 .sp *{box-sizing:border-box}
 .sp svg{width:1em;height:1em;fill:currentColor;vertical-align:-.125em;flex:none;pointer-events:none}
+.sp svg.o{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sp button:focus-visible{outline:2px solid #1db954;outline-offset:2px}
 .sp-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 12px}
 .sp-t{font-size:26px;font-weight:800}
 .sp-tabs{display:flex;gap:8px;overflow-x:auto;margin-bottom:16px;padding-bottom:2px}
@@ -511,6 +905,12 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-mi span{flex:1}
 .sp-mi svg{color:#b3b3b3;font-size:22px}
 .sp-warn{color:#f5a623;font-size:13px;margin-top:8px}
+.sp-dvr{display:flex;justify-content:flex-end;margin-top:12px}
+.sp-dvb{background:none;border:0;color:#b3b3b3;display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;padding:8px 12px;border-radius:999px;max-width:100%}
+.sp-dvb:hover{color:#fff;background:#2a2a2a}
+.sp-dvb.on{color:#1db954}
+.sp-dvb svg{font-size:20px}
+.sp-dvb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>`;
 
 /* ---- telas ---- */
@@ -519,20 +919,20 @@ const bar=(p,d)=>`<div class=sp-bar><span id=mu-c>${tm(p)}</span><input id=mu-s 
 const vol=(id,v)=>`<label class=sp-vol>${I.vlo}<input ${id?'id='+id:''} type=range min=0 max=1 step=.01 value=${v} aria-label="Volume" oninput="MU.vol(this.value)">${I.spk}</label>`;
 
 function ban(){
-  const id=away();if(!id||(cur>=0&&!el.paused))return'';
+  const id=away();if(!id||(playing()))return'';
   const d=dev(id),s=R[id].st;
   return`<div class=sp-card style="box-shadow:inset 0 0 0 1px #1db954"><div class=sp-ti style="font-size:17px">Tocando em ${esc(d.name)}</div><p class=sp-s style="margin-top:4px">${esc(s.n||'')}</p><div class=sp-row style="margin-top:12px"><button class=sp-btn onclick="MU.take('${id}')">Tocar aqui</button><button class="sp-btn g" onclick="MU.ctl('${id}')">Controlar</button></div></div>`;
 }
 /* Tocando agora (aba Início) */
 function pcard(){
-  const t=T[cur],pl=cur>=0&&!el.paused,d=isFinite(el.duration)?el.duration:0;
-  return`<div class="sp-card sp-np"><div class=sp-art style="${t?cov(t.name):'background:#2a2a2a'}">${I.note}</div><div class=sp-ti>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s style="margin-top:4px">${t?esc(APP)+(ctx&&pget(ctx)?' · '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${t?`<button class="sp-btn g sm" style="margin-top:10px" onclick="MU.ren(${cur})">Renomear</button>`:''}${bar(el.currentTime,d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('',el.volume)}</div>`;
+  const t=T[cur],pl=playing(),d=curDur();
+  return`<div class="sp-card sp-np"><div class=sp-art style="${t?cov(t.name):'background:#2a2a2a'}">${I.note}</div><div class=sp-ti>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s style="margin-top:4px">${t?esc(APP)+(ctx&&pget(ctx)?' · '+esc(pget(ctx).name):''):'Adicione músicas para começar'}</p>${t?`<button class="sp-btn g sm" style="margin-top:10px" onclick="MU.ren(${cur})">Renomear</button>`:''}${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('',curVol())}${cerr()}${dbtn()}</div>`;
 }
 /* Mini player (outras abas) */
 function mini(){
   if(cur<0||!T[cur]||TAB=='home'||RC)return'';
-  const pl=!el.paused,w=el.duration>0?el.currentTime/el.duration*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${cov(T[cur].name)}" onclick="MU.tab('home')">${I.note}</div><div class=sp-i onclick="MU.tab('home')"><div class=sp-n>${esc(nm(T[cur].name))}</div><p class=sp-s>${esc(APP)}</p></div><button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  const pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
+  return`<div class=sp-mini><div class=sp-cv style="${cov(T[cur].name)}" onclick="MU.tab('home')">${I.note}</div><div class=sp-i onclick="MU.tab('home')"><div class=sp-n>${esc(nm(T[cur].name))}</div><p class=sp-s>${esc(CA.on&&CA.name?CA.name:APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
 const tabs=()=>`<div class=sp-tabs>${[['home','Início'],['lib','Músicas'],['pls','Playlists'],['dev','Aparelhos']].map(a=>`<button class="sp-chip${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')">${a[1]}</button>`).join('')}</div>`;
 
@@ -554,7 +954,7 @@ function home(){
 /* Músicas (biblioteca) */
 function resLib(){
   if(!T.length)return'<p class=sp-s style="padding:8px">Nenhuma música ainda. Use “Adicionar” e escolha os arquivos do aparelho.</p>';
-  const q=QL.trim(),pl=cur>=0&&!el.paused,r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
+  const q=QL.trim(),pl=playing(),r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
   if(!r.length)return none(q);
   return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${cov(x.t.name)}" onclick="MU.pl(${x.i})">${x.i==cur&&pl?I.spk:I.note}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
 }
@@ -569,12 +969,12 @@ ${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div>`;
 
 /* Playlists */
 function plcard(){
-  const pl=cur>=0&&!el.paused;
+  const pl=playing();
   return`<div class=sp-h style="margin-top:0">Playlists<button class="sp-btn sm" onclick="MU.pn()">Nova playlist</button></div>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class="sp-r${ctx==p.id?' on':''}"><div class=sp-cv style="${plSt(p)}" onclick="MU.po('${p.id}')">${ctx==p.id&&pl?I.spk:(p.img?'':I.list)}</div><div class=sp-i onclick="MU.po('${p.id}')"><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="MU.pplay('${p.id}')" title="Tocar" aria-label="Tocar">${I.play}</button><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>`}).join('')||'<p class=sp-s style="padding:8px">Crie uma playlist e adicione músicas da biblioteca.</p>'}`;
 }
 function pdet(){
   const p=pget(PV);if(!p){PV=null;return plcard()}
-  const pl=cur>=0&&!el.paused,L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
+  const pl=playing(),L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
   return`<div class=sp-card><div class=sp-row><button class="sp-btn g sm" onclick="MU.po(null)">Voltar</button><span class=sp-i></span><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>
 <div class=sp-row style="margin:16px 0;flex-wrap:nowrap"><div class=sp-cv style="${plSt(p)};width:96px;height:96px;font-size:40px;cursor:default">${p.img?'':I.list}</div><div class=sp-i style="cursor:default"><div class=sp-ti style="text-align:left">${esc(p.name)}</div><p class=sp-s style="margin-top:4px">${L.length} ${L.length==1?'música':'músicas'}</p></div></div>
 <div class=sp-row>${L.length?`<button class=sp-btn onclick="MU.pplay('${p.id}')">Tocar playlist</button>`:''}<label class="sp-btn g sm" style="cursor:pointer">${p.img?'Trocar foto':'Adicionar foto'}<input type=file accept="image/*" hidden onchange="MU.img('${p.id}',this.files[0]);this.value=''"></label>${p.img?`<button class="sp-btn g sm" onclick="MU.noimg('${p.id}')">Remover foto</button>`:''}</div></div>
@@ -595,7 +995,7 @@ function padd(){
 /* Aparelhos */
 function dv(){
   const oc=openConns();
-  return`<div class=sp-h style="margin-top:0">Aparelhos</div>${oc.length?oc.map(c=>{const d=dev(c.hid);return`<div class=sp-card><div class=sp-row><div class=sp-cv style="background:#2a2a2a;cursor:default">${I.dev}</div><div class=sp-i style="cursor:default"><div class=sp-n>${esc(d.name)}</div><p class=sp-s>${c.hid==RC?'controlando agora':'conectado'}</p></div></div><div class=sp-row style="margin-top:12px"><button class="sp-btn g sm" onclick="MU.sy('${c.hid}')">Sincronizar músicas</button>${c.hid==RC?'':`<button class="sp-btn sm" onclick="MU.ctl('${c.hid}')">Controlar</button>`}</div></div>`}).join(''):'<div class=sp-card><p class=sp-s>Nenhum aparelho conectado. Conecte outro em Configurações → Dispositivos.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="go(\'cfg\')">Ir para Configurações</button></div>'}
+  return`<div class=sp-h style="margin-top:0">Aparelhos<button class="sp-btn sm" onclick="MU.dsh(1)">Conectar a um aparelho</button></div>${oc.length?oc.map(c=>{const d=dev(c.hid);return`<div class=sp-card><div class=sp-row><div class=sp-cv style="background:#2a2a2a;cursor:default">${I.dev}</div><div class=sp-i style="cursor:default"><div class=sp-n>${esc(d.name)}</div><p class=sp-s>${c.hid==RC?'controlando agora':'conectado'}</p></div></div><div class=sp-row style="margin-top:12px"><button class="sp-btn g sm" onclick="MU.sy('${c.hid}')">Sincronizar músicas</button>${c.hid==RC?'':`<button class="sp-btn sm" onclick="MU.ctl('${c.hid}')">Controlar</button>`}</div></div>`}).join(''):'<div class=sp-card><p class=sp-s>Nenhum aparelho conectado. Conecte outro em Configurações → Dispositivos.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="go(\'cfg\')">Ir para Configurações</button></div>'}
 <p class=sp-s id=mu-xf style="margin-top:8px">${esc(XF)}</p>
 <p class=sp-s style="margin-top:8px">Só um aparelho toca por vez: ao dar play em um, os outros pausam sozinhos. <b style="color:#fff">Sincronizar</b> troca entre os dois as músicas que faltam. <b style="color:#fff">Controlar</b> faz o outro aparelho tocar e você manda nele daqui. Os dois precisam estar com o Hub aberto.</p>`;
 }
@@ -603,7 +1003,7 @@ function dv(){
 /* Controle remoto */
 function rcard(){
   const d=dev(RC),r=R[RC]||{},s=r.st,p=s?rpos(r):0;
-  return`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn g sm" onclick="MU.stop()">Voltar</button></div><div class="sp-card sp-np"><p class=sp-s>Controlando ${esc(d.name)}</p><div class=sp-art style="margin-top:14px;${s&&s.n?cov(s.n):'background:#2a2a2a'}">${I.note}</div><div class=sp-ti>${s?(s.n?esc(s.n):'Nenhuma música tocando'):'Aguardando o aparelho…'}</div>${s&&s.b?'<p class=sp-warn>O navegador do outro aparelho bloqueou o início da música. Toque na tela dele uma vez e tente de novo.</p>':''}${bar(p,s?s.dur:0)}${ctrl('MU.cmd',s&&s.p,s&&s.sh,s&&s.rp)}${vol('mu-v',s?s.v:1)}<button class="sp-btn g" style="margin-top:16px" onclick="MU.back()">Tocar aqui</button></div>`;
+  return`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn g sm" onclick="MU.stop()">Voltar</button></div><div class="sp-card sp-np"><p class=sp-s>Controlando ${esc(d.name)}</p><div class=sp-art style="margin-top:14px;${s&&s.n?cov(s.n):'background:#2a2a2a'}">${I.note}</div><div class=sp-ti>${s?(s.n?esc(s.n):'Nenhuma música tocando'):'Aguardando o aparelho…'}</div>${s&&s.b?'<p class=sp-warn>O navegador do outro aparelho bloqueou o início da música. Toque na tela dele uma vez e tente de novo.</p>':''}${bar(p,s?s.dur:0)}${ctrl('MU.cmd',s&&s.p,s&&s.sh,s&&s.rp)}${vol('mu-v',s?s.v:1)}${dbtn()}<button class="sp-btn g" style="margin-top:16px" onclick="MU.back()">Tocar aqui</button></div>`;
 }
 function resRem(){
   const r=R[RC]||{},s=r.st,L=r.names||[];
@@ -666,6 +1066,8 @@ function playPL(id){
 if(!PG.some(p=>p[0]=='mus'))PG.splice(PG.length-1,0,['mus','🎵','Música']);
 P.mus=view;
 dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;draw();bls()}).catch(()=>{fail=1;draw()});
+/* se já transmitiu antes, carrega o Cast logo no início para retomar a sessão ao recarregar a página */
+try{if(localStorage.getItem('hub_cast_used'))castBoot()}catch(e){}
 
 return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
@@ -681,13 +1083,14 @@ return{
   qa(v){QA=v;const e=$('#mu-resa');if(e)e.innerHTML=resAdd()},
   qr(v){QR=v;const e=$('#mu-resr');if(e)e.innerHTML=resRem()},
   lc(a){if(a=='tg')toggle();else if(a=='nx')next();else if(a=='pv')prev();else if(a=='sh'){shuf=!shuf;seen.clear();dropPre();draw();sched()}else if(a=='rp'){rep=!rep;dropPre();draw();sched()}},
-  vol(v){RC?cmd('vol',v):el.volume=+v},
-  sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):el.currentTime=+v;seeking=0}},
+  vol(v){RC?cmd('vol',v):setVol(v)},
+  sk(v,live){if(live){seeking=1;const c=$('#mu-c');if(c)c.textContent=tm(+v)}else{RC?cmd('sk',v):seekTo(v);seeking=0}},
   cmd,
-  ctl(id){RC=id;el.pause();draw()},
+  ctl,
   stop(){RC=null;TAB='dev';draw()},
   take,dp(){DUP=!DUP;draw()},rx:rmExact,
   back(){take(RC)},
-  sy(id){const c=openConns().find(x=>x.hid==id);if(!c)return;setXF('Verificando as músicas dos dois aparelhos…');sendJ(c,{t:'mu-man',items:man(),reply:1})}
+  sy:syncDev,
+  dsh,dsel
 };
 })();

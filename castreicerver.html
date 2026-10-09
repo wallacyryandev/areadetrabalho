@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Hub Pessoal - Receptor</title>
+<script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<style>
+  html,body{margin:0;height:100%;background:#121212}
+  cast-media-player{
+    --theme-hue:145;
+    --progress-color:#1db954;
+    --playback-logo-image:url('icon-192.png');
+    --splash-image:url('icon-512.png');
+    --splash-color:#121212;
+    --background-color:#121212;
+  }
+</style>
+</head>
+<body>
+<cast-media-player></cast-media-player>
+<script>
+  /* Receptor mínimo: o próprio framework toca a URL enviada pelo Hub e mostra título/capa/progresso. */
+  const ctx = cast.framework.CastReceiverContext.getInstance();
+  const opts = new cast.framework.CastReceiverOptions();
+  opts.disableIdleTimeout = false;
+  ctx.start(opts);
+</script>
+</body>
+</html>
