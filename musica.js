@@ -174,22 +174,64 @@ async function readTags(blob){ /* só ID3v2.3/2.4 (MP3) */
   return o;
 }
 const MC=new Map();
+/* redesenha (com atraso) quando uma capa termina de carregar, para as listas mostrarem a imagem */
+let cdt=0;
+const covDraw=()=>{clearTimeout(cdt);cdt=setTimeout(()=>{if(seeking)return covDraw();draw()},400)};
+/* cor predominante da capa (calculada uma única vez por faixa, em miniatura 32x32; blob local, sem CORS) */
+function palette(blob){
+  return new Promise(res=>{
+    const im=new Image(),u=URL.createObjectURL(blob);
+    im.onload=()=>{
+      try{
+        const S=32,c=document.createElement('canvas');c.width=c.height=S;
+        const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(im,0,0,S,S);
+        const d=g.getImageData(0,0,S,S).data,B=Array.from({length:12},()=>({w:0,x:0,y:0,s:0}));let n=0;
+        for(let k=0;k<d.length;k+=4){
+          if(d[k+3]<128)continue;n++;
+          const r=d[k]/255,gg=d[k+1]/255,b=d[k+2]/255,mx=Math.max(r,gg,b),mn=Math.min(r,gg,b),df=mx-mn;
+          if(df<.08)continue;
+          const l=(mx+mn)/2,den=1-Math.abs(2*l-1),sat=den>0?Math.min(1,df/den):0;
+          let h=mx==r?((gg-b)/df)%6:mx==gg?(b-r)/df+2:(r-gg)/df+4;h=(h*60+360)%360;
+          const e=B[Math.floor(h/30)%12],a=h*Math.PI/180;
+          e.w+=df;e.x+=Math.cos(a)*df;e.y+=Math.sin(a)*df;e.s+=sat*df;
+        }
+        URL.revokeObjectURL(u);
+        let best=B[0];B.forEach(e=>{if(e.w>best.w)best=e});
+        if(!n||best.w/n<.06){res(null);return}   /* capa quase sem cor: fundo neutro */
+        res({h:(Math.atan2(best.y,best.x)*180/Math.PI+360)%360,s:best.s/best.w});
+      }catch(e){URL.revokeObjectURL(u);res(null)}
+    };
+    im.onerror=()=>{URL.revokeObjectURL(u);res(null)};
+    im.src=u;
+  });
+}
 function meta(t){
   const k=key(t);let m=MC.get(k);if(m)return m;
   const a=artOf(t.name),n=nm(t.name);
-  m={title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a,album:'',cover:''};
+  m={title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a,album:'',cover:'',pal:undefined};
   MC.set(k,m);
-  readTags(t.blob).then(o=>{
-    if(!o)return;
-    if(o.artist&&!m.artist)m.artist=o.artist;
-    if(o.album)m.album=o.album;
-    if(o.pic&&o.pic.size>0)m.cover=URL.createObjectURL(o.pic);
-    if(cur>=0&&T[cur]===t){msMeta(cur);draw()}
-  }).catch(()=>{});
+  readTags(t.blob).then(async o=>{
+    let ch=0;
+    if(o){
+      if(o.artist&&!m.artist){m.artist=o.artist;ch=1}
+      if(o.album){m.album=o.album;ch=1}
+      if(o.pic&&o.pic.size>0){m.cover=URL.createObjectURL(o.pic);ch=1;m.pal=await palette(o.pic)}
+    }
+    if(m.pal===undefined)m.pal=null;
+    if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg()}
+    if(ch)covDraw();
+  }).catch(()=>{if(m.pal===undefined)m.pal=null});
   return m;
 }
-const artSt=t=>{const m=meta(t);return m.cover?'background:#222 url('+m.cover+') center/cover no-repeat':cov(t.name)};
+const artSt=t=>{const m=meta(t);return m.cover?'background:#222 url('+m.cover+') center/cover no-repeat':'background:#2a2a2a;color:#ffffff55'};
 const artIc=t=>meta(t).cover?'':I.note;
+/* capa da playlist: foto escolhida, se houver; senão grade 2x2 com as 4 primeiras músicas */
+const plcv=(p,st,at)=>{
+  if(p.img)return'<div class=sp-cv style="'+plSt(p)+';'+(st||'')+'" '+(at||'')+'></div>';
+  const L=p.keys.map(tIdx).filter(i=>i>=0).slice(0,4);let c='';
+  for(let n=0;n<4;n++){const t=n<L.length?T[L[n]]:null;c+=t?'<div class=sp-mc style="'+artSt(t)+'">'+artIc(t)+'</div>':'<div class=sp-mc></div>'}
+  return'<div class="sp-cv sp-mos" style="'+(st||'')+'" '+(at||'')+'>'+c+'</div>';
+};
 const tline=()=>tm(curPos())+' / '+tm(curDur())+' · Sessão: '+fT(SESS);
 
 function stTick(){
@@ -353,7 +395,7 @@ async function applyRen(i,name,remote){
   t.name=name;KM=null;
   const nk=key(t);if(had)seen.add(nk);
   MC.delete(old);
-  if(om){const a=artOf(t.name),n=nm(t.name);MC.set(nk,{title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a||om.artist,album:om.album,cover:om.cover})}
+  if(om){const a=artOf(t.name),n=nm(t.name);om.title=a?n.replace(/^.*?\s+[-–—]\s+/,''):n;om.artist=a||om.artist;MC.set(nk,om)}
   if(!remote)openConns().forEach(c=>sendJ(c,{t:'mu-rn',ok:old,name,size:t.size}));
   PL.forEach(p=>{
     const j=p.keys.indexOf(old);if(j<0)return;
@@ -770,7 +812,9 @@ const NPCSS=`#mu-np{position:fixed;inset:0;z-index:9000;visibility:hidden;pointe
 #mu-np .np-tt span{color:#ffffffb3;font-size:14px}
 #mu-np .np-ft{display:flex;align-items:center;justify-content:flex-start;margin-top:14px}
 #mu-np .np-h{font-size:18px;font-weight:700;margin:26px 0 8px}
-@media(prefers-reduced-motion:reduce){#mu-np .np-sh{transition:none}}`;
+#mu-np .np-bg{position:absolute;top:0;left:0;right:0;height:100vh;height:100dvh;opacity:0;transition:opacity .8s ease;pointer-events:none}
+#mu-np .np-gr,#mu-np #mu-npb{position:relative;z-index:1}
+@media(prefers-reduced-motion:reduce){#mu-np .np-sh,#mu-np .np-bg{transition:none}}`;
 
 function npQueue(){
   const p=ctx&&pget(ctx);
@@ -789,13 +833,28 @@ function npBody(){
 ${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
 <div class=np-ft>${dbi()}</div><p class=sp-s id=mu-tt style="text-align:center;margin-top:10px">${tline()}</p>${npQueue()}`;
 }
+/* fundo da tela cheia: gradiente com a cor predominante da capa (cacheada), escurecendo até o fundo; troca com fade entre duas camadas */
+let NBG='',NBF=0;
+const bgOf=t=>{
+  const c=meta(t).pal;
+  if(!c)return'linear-gradient(180deg,hsl(0,0%,22%) 0%,hsl(0,0%,15%) 55%,#121212 100%)';
+  const h=Math.round(c.h),sa=Math.round(Math.min(c.s,.55)*100);
+  return'linear-gradient(180deg,hsl('+h+','+sa+'%,28%) 0%,hsl('+h+','+Math.round(sa*.85)+'%,17%) 55%,#121212 100%)';
+};
+function npBg(){
+  const t=T[cur];if(!t)return;
+  const g=bgOf(t);if(g===NBG)return;
+  const a=document.getElementById('mu-nbg'+NBF),b=document.getElementById('mu-nbg'+(1-NBF));
+  if(!a||!b)return;
+  NBG=g;NBF=1-NBF;b.style.background=g;b.style.opacity=1;a.style.opacity=0;
+}
 function npUpd(){
   if(!NPO)return;
   if(RC||cur<0||!T[cur]){nph(0);return}
   if(seeking)return;
   const b=document.getElementById('mu-npb'),sh=document.querySelector('#mu-np .np-sh');if(!b||!sh)return;
   const a=document.activeElement,L=[...b.querySelectorAll('button,input,[role=button]')],fi=a&&b.contains(a)?L.indexOf(a):-1;
-  sh.style.background='linear-gradient(180deg,hsl('+hue(T[cur].name)+',45%,30%) 0,#121212 78%) #121212';
+  npBg();
   b.innerHTML=npBody();
   if(fi>=0){const n=[...b.querySelectorAll('button,input,[role=button]')][fi];if(n)n.focus()}
 }
@@ -803,7 +862,7 @@ function npMount(){
   if(document.getElementById('mu-np'))return;
   const st=document.createElement('style');st.textContent=NPCSS;document.head.appendChild(st);
   const d=document.createElement('div');d.id='mu-np';d.inert=true;d.setAttribute('aria-hidden','true');
-  d.innerHTML=`<div class=np-sh role=dialog aria-modal=true aria-label="Tocando agora" tabindex=-1><div class=np-gr id=mu-npg><i></i></div><div id=mu-npb></div></div>`;
+  d.innerHTML=`<div class=np-sh role=dialog aria-modal=true aria-label="Tocando agora" tabindex=-1><div class=np-bg id=mu-nbg0></div><div class=np-bg id=mu-nbg1></div><div class=np-gr id=mu-npg><i></i></div><div id=mu-npb></div></div>`;
   document.body.appendChild(d);
   d.addEventListener('keydown',e=>{
     if(e.key=='Escape'){e.preventDefault();nph(0);return}
@@ -895,6 +954,9 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-pc{background:#181818;border-radius:10px;padding:12px;cursor:pointer}
 .sp-pc:hover{background:#282828}
 .sp-pc .sp-cv{width:100%;height:auto;aspect-ratio:1;font-size:40px;margin-bottom:10px}
+.sp-mos{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:0;padding:0;overflow:hidden}
+.sp-mc{display:flex;align-items:center;justify-content:center;background:#2a2a2a;color:#ffffff55;min-width:0;min-height:0;overflow:hidden}
+.sp .sp-mc svg{width:.55em;height:.55em}
 .sp-q{width:100%;background:#2a2a2a;border:0;border-radius:999px;color:#fff;padding:11px 18px;font:inherit;font-size:15px;margin-bottom:10px;outline:0}
 .sp-q:focus{box-shadow:0 0 0 2px #1db954}
 .sp.hb{padding-bottom:160px}
@@ -965,7 +1027,7 @@ const none=q=>`<p class=sp-s style="padding:8px">Nada encontrado para “${esc(q
 function plgrid(){
   const L=pls();
   if(!L.length)return`<div class=sp-h>Suas playlists</div><div class=sp-card><p class=sp-s>Crie sua primeira playlist com as músicas da biblioteca.</p><button class=sp-btn style="margin-top:10px" onclick="MU.pn()">Nova playlist</button></div>`;
-  return`<div class=sp-h>Suas playlists<button class="sp-btn g sm" onclick="MU.pn()">Nova</button></div><div class=sp-grid>${L.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=sp-pc onclick="MU.po('${p.id}')"><div class=sp-cv style="${plSt(p)}">${p.img?'':I.list}</div><div class=sp-row style="flex-wrap:nowrap"><div class=sp-i><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="event.stopPropagation();MU.pplay('${p.id}')" aria-label="Tocar playlist">${I.play}</button></div></div>`}).join('')}</div>`;
+  return`<div class=sp-h>Suas playlists<button class="sp-btn g sm" onclick="MU.pn()">Nova</button></div><div class=sp-grid>${L.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class=sp-pc onclick="MU.po('${p.id}')">${plcv(p)}<div class=sp-row style="flex-wrap:nowrap"><div class=sp-i><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="event.stopPropagation();MU.pplay('${p.id}')" aria-label="Tocar playlist">${I.play}</button></div></div>`}).join('')}</div>`;
 }
 function home(){
   return ban()+(T.length?'':`<div class=sp-card><p class=sp-s>Sua biblioteca está vazia.</p><label class=sp-btn style="margin-top:10px;cursor:pointer">Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>`)+plgrid();
@@ -976,7 +1038,7 @@ function resLib(){
   if(!T.length)return'<p class=sp-s style="padding:8px">Nenhuma música ainda. Use “Adicionar” e escolha os arquivos do aparelho.</p>';
   const q=QL.trim(),pl=playing(),r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
   if(!r.length)return none(q);
-  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${cov(x.t.name)}" onclick="MU.pl(${x.i})">${x.i==cur&&pl?I.spk:I.note}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
+  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${artSt(x.t)}" onclick="MU.pl(${x.i})">${artIc(x.t)}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
 }
 function lcard(){
   const n=dups().length;
@@ -990,15 +1052,15 @@ ${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div>`;
 /* Playlists */
 function plcard(){
   const pl=playing();
-  return`<div class=sp-h style="margin-top:0">Playlists<button class="sp-btn sm" onclick="MU.pn()">Nova playlist</button></div>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class="sp-r${ctx==p.id?' on':''}"><div class=sp-cv style="${plSt(p)}" onclick="MU.po('${p.id}')">${ctx==p.id&&pl?I.spk:(p.img?'':I.list)}</div><div class=sp-i onclick="MU.po('${p.id}')"><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="MU.pplay('${p.id}')" title="Tocar" aria-label="Tocar">${I.play}</button><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>`}).join('')||'<p class=sp-s style="padding:8px">Crie uma playlist e adicione músicas da biblioteca.</p>'}`;
+  return`<div class=sp-h style="margin-top:0">Playlists<button class="sp-btn sm" onclick="MU.pn()">Nova playlist</button></div>${pls().map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length;return`<div class="sp-r${ctx==p.id?' on':''}">${plcv(p,'',`onclick="MU.po('${p.id}')"`)}<div class=sp-i onclick="MU.po('${p.id}')"><div class=sp-n>${esc(p.name)}</div><p class=sp-s>${n} ${n==1?'música':'músicas'}</p></div><button class="sp-pp sm" onclick="MU.pplay('${p.id}')" title="Tocar" aria-label="Tocar">${I.play}</button><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>`}).join('')||'<p class=sp-s style="padding:8px">Crie uma playlist e adicione músicas da biblioteca.</p>'}`;
 }
 function pdet(){
   const p=pget(PV);if(!p){PV=null;return plcard()}
   const pl=playing(),L=p.keys.map(k=>({k,i:tIdx(k)})).filter(x=>x.i>=0);
   return`<div class=sp-card><div class=sp-row><button class="sp-btn g sm" onclick="MU.po(null)">Voltar</button><span class=sp-i></span><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>
-<div class=sp-row style="margin:16px 0;flex-wrap:nowrap"><div class=sp-cv style="${plSt(p)};width:96px;height:96px;font-size:40px;cursor:default">${p.img?'':I.list}</div><div class=sp-i style="cursor:default"><div class=sp-ti style="text-align:left">${esc(p.name)}</div><p class=sp-s style="margin-top:4px">${L.length} ${L.length==1?'música':'músicas'}</p></div></div>
+<div class=sp-row style="margin:16px 0;flex-wrap:nowrap">${plcv(p,'width:96px;height:96px;font-size:40px;cursor:default')}<div class=sp-i style="cursor:default"><div class=sp-ti style="text-align:left">${esc(p.name)}</div><p class=sp-s style="margin-top:4px">${L.length} ${L.length==1?'música':'músicas'}</p></div></div>
 <div class=sp-row>${L.length?`<button class=sp-btn onclick="MU.pplay('${p.id}')">Tocar playlist</button>`:''}<label class="sp-btn g sm" style="cursor:pointer">${p.img?'Trocar foto':'Adicionar foto'}<input type=file accept="image/*" hidden onchange="MU.img('${p.id}',this.files[0]);this.value=''"></label>${p.img?`<button class="sp-btn g sm" onclick="MU.noimg('${p.id}')">Remover foto</button>`:''}</div></div>
-${L.map(x=>`<div class="sp-r${x.i==cur&&ctx==p.id?' on':''}"><div class=sp-cv style="${cov(T[x.i].name)}" onclick="MU.pp('${p.id}',${x.i})">${x.i==cur&&ctx==p.id&&pl?I.spk:I.note}</div><div class=sp-i onclick="MU.pp('${p.id}',${x.i})"><div class=sp-n>${esc(nm(T[x.i].name))}</div></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pr('${p.id}','${x.k}')" title="Tirar da playlist" aria-label="Tirar da playlist">${I.x}</button></div>`).join('')||'<p class=sp-s style="padding:8px">Playlist vazia. Busque e adicione músicas abaixo.</p>'}`;
+${L.map(x=>`<div class="sp-r${x.i==cur&&ctx==p.id?' on':''}"><div class=sp-cv style="${artSt(T[x.i])}" onclick="MU.pp('${p.id}',${x.i})">${artIc(T[x.i])}</div><div class=sp-i onclick="MU.pp('${p.id}',${x.i})"><div class=sp-n>${esc(nm(T[x.i].name))}</div></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pr('${p.id}','${x.k}')" title="Tirar da playlist" aria-label="Tirar da playlist">${I.x}</button></div>`).join('')||'<p class=sp-s style="padding:8px">Playlist vazia. Busque e adicione músicas abaixo.</p>'}`;
 }
 function resAdd(){
   const p=pget(PV);if(!p)return'';
@@ -1006,7 +1068,7 @@ function resAdd(){
   const q=QA.trim();if(!q)return'<p class=sp-s style="padding:8px">Digite o nome da música para adicionar.</p>';
   const r=T.map((t,i)=>({t,i})).filter(x=>!p.keys.includes(key(x.t))&&matches(x.t.name,q));
   if(!r.length)return`<p class=sp-s style="padding:8px">Nada encontrado para “${esc(q)}” (ou já está na playlist).</p>`;
-  return r.slice(0,LIM).map(x=>`<div class=sp-r><div class=sp-cv style="${cov(x.t.name)}">${I.note}</div><div class=sp-i><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class="sp-btn g sm" onclick="MU.pa('${p.id}',${x.i})">Adicionar</button></div>`).join('')+more(r.length);
+  return r.slice(0,LIM).map(x=>`<div class=sp-r><div class=sp-cv style="${artSt(x.t)}">${artIc(x.t)}</div><div class=sp-i><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class="sp-btn g sm" onclick="MU.pa('${p.id}',${x.i})">Adicionar</button></div>`).join('')+more(r.length);
 }
 function padd(){
   return`<div class=sp-h>Adicionar músicas</div>${T.length?sbox('mu-qa',QA,'MU.qa'):''}<div id=mu-resa>${resAdd()}</div>`;
