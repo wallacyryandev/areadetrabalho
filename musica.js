@@ -3,13 +3,12 @@
    + troca de músicas entre aparelhos conectados e controle remoto (estilo Spotify Connect).
    Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js.
 
-   Versão anterior: renomear música, foto nas playlists, ícones SVG, tela de menu pela engrenagem.
-
-   NOVO nesta versão (seletor de aparelhos, estilo Spotify Connect):
-   - Ícone de aparelhos no player ("Tocando agora", mini player e controle remoto) abre um painel inferior
-     (bottom sheet) escuro com: este aparelho e os aparelhos do Hub (conectados pelo "Conectar dispositivo").
-   - Tocar em um aparelho do Hub TRANSFERE a reprodução (mesma música, mesma posição, mesmo estado).
-   - Correção: classes do painel prefixadas com "ds-" (evita conflito com o CSS global do Hub) e título removido. */
+   NOVO nesta versão (informações reais da reprodução):
+   - Artista, álbum e capa lidos das tags ID3v2.3/2.4 do próprio MP3 (nada é inventado).
+     Sem tag: usa o padrão "Cantor - Música" do nome do arquivo; por último o nome do app.
+   - Tempo no formato 01:24 / 03:45 e tempo de escuta da sessão atual na tela "Tocando agora".
+   - Media Session (tela de bloqueio) com título, artista, capa e nome da playlist.
+   Limitações: só MP3 com ID3v2.3/2.4 tem tags lidas (M4A/FLAC/OGG/ID3v2.2 usam o nome do arquivo). */
 const MU=(()=>{
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
@@ -57,7 +56,8 @@ const dbp=new Promise((res,rej)=>{try{const r=indexedDB.open('hub-musicas',1);r.
 const tx=async(m,f)=>{const d=await dbp;return new Promise((res,rej)=>{const t=d.transaction('t',m),o=f(t.objectStore('t'));t.oncomplete=()=>res(o&&o.result);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)})};
 
 /* ---- helpers ---- */
-const tm=s=>isFinite(s)&&s>0?Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'):'0:00';
+/* formato 01:24 */
+const tm=s=>isFinite(s)&&s>0?String(Math.floor(s/60)).padStart(2,'0')+':'+String(Math.floor(s%60)).padStart(2,'0'):'00:00';
 const nm=n=>n.replace(/\.[^/.]+$/,'').replace(/_/g,' ').trim();
 const mb=b=>(b/1048576).toFixed(1).replace('.',',')+' MB';
 const draw=()=>{
@@ -91,8 +91,11 @@ window.render=function(){
 
 /* ---- Media Session (cartão do Chrome / tela de bloqueio) ---- */
 const msMeta=i=>{
-  if(!('mediaSession' in navigator))return;
-  try{navigator.mediaSession.metadata=new MediaMetadata({title:nm(T[i].name),artist:APP,album:APP,artwork:ART})}catch(e){}
+  if(!('mediaSession' in navigator)||!T[i])return;
+  try{
+    const m=meta(T[i]),p=ctx&&pget(ctx);
+    navigator.mediaSession.metadata=new MediaMetadata({title:m.title,artist:m.artist||APP,album:p?p.name:(m.album||APP),artwork:m.cover?[{src:m.cover,sizes:'512x512'}]:ART});
+  }catch(e){}
 };
 const msPos=()=>{
   if(!('mediaSession' in navigator))return;
@@ -142,6 +145,53 @@ let stPos=-1,stCur=-2,stAcc=0,stCnt=0,stDirty=0;
 const stDay=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const saveST=()=>{if(!stDirty)return;stDirty=0;try{localStorage.setItem('hub_mstats',JSON.stringify(STT))}catch(e){}};
 const artOf=name=>{const m=nm(name).split(/\s+[-–—]\s+/);return m.length>1?m[0].trim():''};
+
+/* ---- metadados reais da faixa (tags ID3 do MP3) ---- */
+let SESS=0; /* segundos ouvidos desde que o app foi aberto (zera ao reabrir) */
+async function readTags(blob){ /* só ID3v2.3/2.4 (MP3) */
+  const h=new Uint8Array(await blob.slice(0,10).arrayBuffer());
+  if(h[0]!=73||h[1]!=68||h[2]!=51||h[3]<3||(h[5]&64))return null;
+  const ver=h[3],sz=((h[6]&127)<<21)|((h[7]&127)<<14)|((h[8]&127)<<7)|(h[9]&127);
+  const u=new Uint8Array(await blob.slice(10,10+Math.min(sz,4194304)).arrayBuffer()),dv=new DataView(u.buffer);
+  const dec=(a,e)=>{try{return new TextDecoder(['iso-8859-1','utf-16le','utf-16be','utf-8'][e]||'utf-8').decode(a).replace(/\0+$/,'').replace(/\0/g,', ').trim()}catch(x){return''}};
+  const o={};let p=0;
+  while(p+10<=u.length){
+    const id=String.fromCharCode(u[p],u[p+1],u[p+2],u[p+3]);
+    if(!/^[A-Z0-9]{4}$/.test(id))break;
+    const fs=ver==4?((u[p+4]&127)<<21)|((u[p+5]&127)<<14)|((u[p+6]&127)<<7)|(u[p+7]&127):dv.getUint32(p+4);
+    if(!fs||p+10+fs>u.length)break;
+    const f=u.subarray(p+10,p+10+fs),e=f[0];
+    if(id=='TPE1')o.artist=dec(f.subarray(1),e);
+    else if(id=='TALB')o.album=dec(f.subarray(1),e);
+    else if(id=='APIC'&&!o.pic){
+      let i=1;while(i<f.length&&f[i])i++;
+      const mime=dec(f.subarray(1,i),0);i+=2;
+      if(e==0||e==3){while(i<f.length&&f[i])i++;i++}else{while(i+1<f.length&&(f[i]||f[i+1]))i+=2;i+=2}
+      if(i<f.length)o.pic=new Blob([f.subarray(i)],{type:/^image\//.test(mime)?mime:'image/jpeg'});
+    }
+    p+=10+fs;
+  }
+  return o;
+}
+const MC=new Map();
+function meta(t){
+  const k=key(t);let m=MC.get(k);if(m)return m;
+  const a=artOf(t.name),n=nm(t.name);
+  m={title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a,album:'',cover:''};
+  MC.set(k,m);
+  readTags(t.blob).then(o=>{
+    if(!o)return;
+    if(o.artist&&!m.artist)m.artist=o.artist;
+    if(o.album)m.album=o.album;
+    if(o.pic&&o.pic.size>0)m.cover=URL.createObjectURL(o.pic);
+    if(cur>=0&&T[cur]===t){msMeta(cur);draw()}
+  }).catch(()=>{});
+  return m;
+}
+const artSt=t=>{const m=meta(t);return m.cover?'background:#222 url('+m.cover+') center/cover no-repeat':cov(t.name)};
+const artIc=t=>meta(t).cover?'':I.note;
+const tline=()=>tm(curPos())+' / '+tm(curDur())+' · Sessão: '+fT(SESS);
+
 function stTick(){
   if(cur<0||!T[cur]||el.paused){stPos=-1;return}
   const p=el.currentTime;
@@ -149,7 +199,7 @@ function stTick(){
   const dt=stPos<0?0:p-stPos;stPos=p;
   if(dt<=0||dt>2)return;
   const t=T[cur],name=nm(t.name),dk=stDay();
-  STT.tot+=dt;STT.d[dk]=(STT.d[dk]||0)+dt;
+  STT.tot+=dt;SESS+=dt;STT.d[dk]=(STT.d[dk]||0)+dt;
   const r=STT.tr[name]||(STT.tr[name]={s:0,p:0});r.s+=dt;
   const a=artOf(t.name);if(a)STT.ar[a]=(STT.ar[a]||0)+dt;
   const pl=ctx!=null?pget(ctx):null;if(pl)STT.pl[pl.id]=(STT.pl[pl.id]||0)+dt;
@@ -248,6 +298,7 @@ on('ended',()=>{stAcc=0;stCnt=0;stPos=-1});
 on('volumechange',()=>sched());
 on('timeupdate',()=>{
   stTick();
+  const tt=$('#mu-tt');if(tt)tt.textContent=tline();
   const rem=el.duration-el.currentTime;
   if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
   const mp=$('#mu-mp');if(mp&&el.duration>0)mp.style.width=(el.currentTime/el.duration*100)+'%';
@@ -297,8 +348,12 @@ async function applyRen(i,name,remote){
   const old=key(t),rec={id:t.id,name,size:t.size,blob:t.blob};
   try{await tx('readwrite',s=>s.put(rec))}catch(e){say('Não foi possível renomear.');return}
   const had=seen.delete(old);
+  /* os metadados (capa/artista) migram para a nova chave; o título é recalculado pelo novo nome */
+  const om=MC.get(old);
   t.name=name;KM=null;
   const nk=key(t);if(had)seen.add(nk);
+  MC.delete(old);
+  if(om){const a=artOf(t.name),n=nm(t.name);MC.set(nk,{title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a||om.artist,album:om.album,cover:om.cover})}
   if(!remote)openConns().forEach(c=>sendJ(c,{t:'mu-rn',ok:old,name,size:t.size}));
   PL.forEach(p=>{
     const j=p.keys.indexOf(old);if(j<0)return;
@@ -723,16 +778,16 @@ function npQueue(){
   if(shuf)return h+'<p class=sp-s>Modo aleatório ligado: a próxima música é sorteada.</p>';
   const q=qOf(ctx),i=q.indexOf(cur),L=i<0?[]:q.slice(i+1,i+16);
   if(!L.length)return h+'<p class=sp-s>'+(rep&&q.length>1?'Depois desta, a lista volta ao início.':'Esta é a última música da lista.')+'</p>';
-  return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${cov(T[j].name)}" onclick="MU.qp(${j})">${I.note}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(nm(T[j].name))}</div><p class=sp-s>${p?esc(p.name):esc(APP)}</p></div></div>`).join('');
+  return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||(p?p.name:APP))}</p></div></div>`).join('');
 }
 function npBody(){
   const t=T[cur];if(!t)return'';
-  const pl=playing(),p=ctx&&pget(ctx),d=curDur();
+  const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t);
   return`<div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
-<div class=np-art style="${cov(t.name)}">${I.note}</div>
-<div class=np-ti><div class=np-tt><b>${esc(nm(t.name))}</b><span>${esc(APP)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
+<div class=np-art style="${artSt(t)}">${artIc(t)}</div>
+<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||APP)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
 ${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
-<div class=np-ft>${dbi()}</div>${npQueue()}`;
+<div class=np-ft>${dbi()}</div><p class=sp-s id=mu-tt style="text-align:center;margin-top:10px">${tline()}</p>${npQueue()}`;
 }
 function npUpd(){
   if(!NPO)return;
@@ -896,7 +951,7 @@ function ban(){
 /* Mini player (barra fixa de baixo, em todas as abas) */
 function mini(){
   const t=cur>=0&&T[cur],pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${t?cov(t.name):'background:#2a2a2a'}" onclick="MU.nph(1)">${I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(nm(t.name)):'Nada tocando'}</div><p class=sp-s>${esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  return`<div class=sp-mini><div class=sp-cv style="${t?artSt(t):'background:#2a2a2a'}" onclick="MU.nph(1)">${t?artIc(t):I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(meta(t).title):'Nada tocando'}</div><p class=sp-s>${t?esc(meta(t).artist||APP):esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
 /* Barra de navegação do Música (fixa embaixo) */
 const bnav=()=>`<div class=sp-nav>${[['home','Início',I.home],['lib','Músicas',I.note],['pls','Playlists',I.list],['dev','Aparelhos',I.dev]].map(a=>`<button class="sp-nb${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')"${TAB==a[0]?' aria-current=page':''}>${a[2]}<span>${a[1]}</span></button>`).join('')}</div>`;
@@ -1014,7 +1069,7 @@ function newPL(then){
 }
 function editPL(id){
   const p=pget(id);if(!p)return;
-  fm('Editar playlist',[{k:'n',l:'Nome da playlist',v:p.name,r:1}],o=>{p.name=o.n.trim()||p.name;touch(p);draw()},()=>{
+  fm('Editar playlist',[{k:'n',l:'Nome da playlist',v:p.name,r:1}],o=>{p.name=o.n.trim()||p.name;touch(p);if(T[cur])msMeta(cur);draw()},()=>{
     if(!confirm('Excluir a playlist "'+p.name+'"? As músicas continuam na biblioteca.'))return;
     p.del=1;p.keys=[];p.img='';if(PV==id)PV=null;if(ctx==id)ctx=null;touch(p);draw();
   });
