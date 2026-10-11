@@ -59,7 +59,21 @@ const tx=async(m,f)=>{const d=await dbp;return new Promise((res,rej)=>{const t=d
 /* ---- helpers ---- */
 /* formato 01:24 */
 const tm=s=>isFinite(s)&&s>0?String(Math.floor(s/60)).padStart(2,'0')+':'+String(Math.floor(s%60)).padStart(2,'0'):'00:00';
-const nm=n=>n.replace(/\.[^/.]+$/,'').replace(/_/g,' ').trim();
+/* LIMPEZA CENTRAL DOS NOMES (usada por nm(), logo em todas as telas, buscas, estatísticas e aparelhos conectados).
+   1) tira sufixos técnicos de download: (MP3 160K), (MP3 320K), [mp3 128kbps]... em qualquer caixa/espaçamento e em qualquer posição;
+   2) tira o resíduo " 1" no final. Com sufixo técnico removido junto, sempre é resíduo. Sem sufixo, só é removido quando
+      o título tem 2+ palavras ("Música Exemplo 1" -> "Música Exemplo"); título de 1 palavra ("Música 1", "007") fica intacto;
+   3) tira espaços extras. Idempotente: cl(cl(x))==cl(x). Não mexe em (Prod. X), feat., números no meio ou no fim (≠1). */
+const TECH=/[\(\[]\s*mp3\s*\d{2,3}\s*k(?:b(?:\/?s|ps)?)?\s*[\)\]]/gi;
+const cl=s=>{
+  const o=String(s==null?'':s).trim();let t=o,had=false;
+  t=t.replace(TECH,()=>{had=true;return' '}).replace(/\s+/g,' ').trim();
+  const nw=x=>{const m=x.match(/\s+[-–—]\s+(.*)$/);return (m?m[1]:x).split(' ').filter(Boolean).length};
+  for(;;){const m=t.match(/^(.*\S)\s+1$/);if(!m)break;if(!had&&nw(m[1])<2)break;t=m[1]}
+  return t||o;
+};
+const stem=n=>n.replace(/\.[^/.]+$/,'').replace(/_/g,' ').trim();
+const nm=n=>cl(stem(n));
 const mb=b=>(b/1048576).toFixed(1).replace('.',',')+' MB';
 const draw=()=>{
   if(typeof page=='undefined'||page!='mus')return;
@@ -197,7 +211,7 @@ const crd=m=>uniq(m.artists.concat(m.feats));
    Prioridade: 1) tag do arquivo  2) nome do arquivo  3) desconhecido */
 function build(m,name){
   const f=parseName(nm(name)),g=m.tag||{};
-  const gt=g.title?String(g.title).trim():'',gp=gt?xProd(gt):{t:'',p:[]},gx=gt?xFeat(gp.t):{t:'',f:[]},gk=ak(gx.t);
+  const gt=g.title?cl(String(g.title)):'',gp=gt?xProd(gt):{t:'',p:[]},gx=gt?xFeat(gp.t):{t:'',f:[]},gk=ak(gx.t);
   let title=f.title,main=[],feat=[],src='';
   /* arquivo no formato "Música - Cantor": a tag de título confirma que o lado esquerdo é o título */
   const swap=!!(f.left&&gk&&ak(f.left)==gk&&ak(f.raw)!=gk);
@@ -239,6 +253,8 @@ const stDay=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth
 const saveST=()=>{if(!stDirty)return;stDirty=0;try{localStorage.setItem('hub_mstats',JSON.stringify(STT))}catch(e){}};
 /* o histórico por artista guarda só os últimos 120 dias */
 (()=>{const c=new Date();c.setDate(c.getDate()-120);const ck=c.getFullYear()+'-'+String(c.getMonth()+1).padStart(2,'0')+'-'+String(c.getDate()).padStart(2,'0');Object.keys(STT.ad).forEach(k=>{if(k<ck)delete STT.ad[k]})})();
+/* nomes antigos em STT.tr (com "(MP3 160K) 1") passam para o nome limpo; tempos e reproduções são somados */
+(()=>{const o={};let ch=0;Object.keys(STT.tr).forEach(k=>{const v=STT.tr[k]||{},n=cl(k);if(n!=k)ch=1;const e=o[n]||(o[n]={s:0,p:0});e.s+=v.s||0;e.p+=v.p||0});if(ch){STT.tr=o;stDirty=1}})();
 /* credita o intervalo a cada artista da faixa */
 function creditA(m,dt,dk){
   crd(m).forEach(n=>{
@@ -443,7 +459,7 @@ function statsCard(){
     for(let i=0;i<7;i++)aw+=(STT.ad[dkey(new Date(now.getFullYear(),now.getMonth(),now.getDate()-i))]||{})[ak0]||0;
     two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${esc(ta[0].trim().charAt(0).toUpperCase()||'?')}</div><div class=st-tx><div class=st-nm>${esc(ta[0])}</div><div class=st-meta><span><b>${fT(ta[1])}</b> ouvidos</span>${atd>=1?`<span>hoje <b>${fT(atd)}</b></span>`:''}${aw>=1?`<span>7 dias <b>${fT(aw)}</b></span>`:''}</div></div></div></section>`;
   }else{
-    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${I.note}</div><div class=st-tx><div class=st-sub>Para mostrar o artista, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música" (use <b>Renomear</b> na biblioteca).</div></div></div></section>`;
+    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${I.note}</div><div class=st-tx><div class=st-sub>Para mostrar o artista, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música" antes de adicioná-los.</div></div></div></section>`;
   }
   if(two)h+=`<div class=st-two>${two}</div>`;
   if(tr.length>1){
@@ -571,43 +587,6 @@ async function del(i){
   T.splice(i,1);KM=null;hist=[];draw();bls();
 }
 
-/* ---- renomear música ----
-   O nome novo mantém a extensão do arquivo (.mp3 etc.). Como a "chave" da música depende do nome,
-   as playlists são atualizadas e os aparelhos conectados recebem o aviso para renomear também. */
-async function applyRen(i,name,remote){
-  const t=T[i];if(!t||name==t.name)return;
-  const old=key(t),rec={id:t.id,name,size:t.size,blob:t.blob};
-  try{await tx('readwrite',s=>s.put(rec))}catch(e){say('Não foi possível renomear.');return}
-  const had=seen.delete(old);
-  /* os metadados (capa/tags) migram para a nova chave; título e artistas são recalculados pelo novo nome */
-  const om=MC.get(old);
-  t.name=name;KM=null;
-  const nk=key(t);if(had)seen.add(nk);
-  MC.delete(old);
-  if(om){build(om,t.name);MC.set(nk,om)}
-  if(!remote)openConns().forEach(c=>sendJ(c,{t:'mu-rn',ok:old,name,size:t.size}));
-  PL.forEach(p=>{
-    const j=p.keys.indexOf(old);if(j<0)return;
-    if(p.keys.includes(nk))p.keys.splice(j,1);else p.keys[j]=nk;
-    remote?savePL():touch(p);
-  });
-  if(T[cur]===t)msMeta(cur);
-  draw();bls();
-}
-function ren(i){
-  const t=T[i];if(!t)return;
-  fm('Renomear música',[{k:'n',l:'Novo nome',v:nm(t.name),r:1}],o=>{
-    const b=o.n.trim().replace(/[\\\/]+/g,' ');if(!b)return;
-    const m=t.name.match(/\.[^/.]+$/);
-    applyRen(T.indexOf(t),b+(m?m[0]:''));
-  });
-}
-function onRn(m){
-  if(!m||!m.ok||!m.name)return;
-  const i=T.findIndex(x=>key(x)==m.ok);
-  if(i>=0)applyRen(i,String(m.name),1);
-}
-
 /* ---- foto da playlist (reduzida para 256x256 para ficar leve) ---- */
 function pimg(file,cb){
   const im=new Image(),u=URL.createObjectURL(file);
@@ -679,7 +658,6 @@ function onData(c,d){
   else if(m.t=='mu-ls'){(R[id]=R[id]||{}).names=m.names||[];if(RC==id)draw()}
   else if(m.t=='mu-cmd')exec(m.a,m.v);
   else if(m.t=='mu-pl')onPl(c,m.p);
-  else if(m.t=='mu-rn')onRn(m);
   else if(m.t=='mu-go')onGo(c,m);
   else if(m.t=='mu-gf'){XE[id]='Esse aparelho não tem a música "'+String(m.n||'')+'". Use "Sincronizar" e tente de novo.';delete XS[id];if(RC==id)RC=null;draw();dsUpd()}
   else if(m.t=='mu-man')onMan(c,m);
@@ -755,7 +733,7 @@ function take(id){
   const r=R[id],s=r&&r.st,c=openConns().find(x=>x.hid==id);
   TAB='home';
   if(s&&s.n){
-    const i=T.findIndex(x=>nm(x.name)==s.n);
+    const i=T.findIndex(x=>nm(x.name)==cl(s.n));
     if(i<0){const m='Essa música não está neste aparelho. Use "Sincronizar músicas" primeiro.';setXF(m);say(m);return}
     const p=rpos(r);
     if(c)sendJ(c,{t:'mu-cmd',a:'ps'});
@@ -830,7 +808,7 @@ function xfer(id){
 /* o outro aparelho pediu para assumir a reprodução */
 function onGo(c,m){
   if(!m||!m.n)return;
-  const i=T.findIndex(x=>nm(x.name).slice(0,50)==String(m.n).slice(0,50));
+  const n50=String(m.n).slice(0,50),i=T.findIndex(x=>nm(x.name).slice(0,50)==n50||stem(x.name).slice(0,50)==n50);
   if(i<0){sendJ(c,{t:'mu-gf',n:m.n});say('Não tenho "'+m.n+'" aqui. Sincronize as músicas.');return}
   const p=+m.pos||0;
   play(i,m.p?1:0,null,0,p);
@@ -1018,7 +996,7 @@ function npBody(){
   const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t);
   return`<div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
 <div class=np-art style="${artSt(t)}">${artIc(t)}</div>
-<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||UNK)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
+<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||UNK)}</span></div><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
 ${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
 <div class=np-ft>${dbi()}</div><p class=sp-s id=mu-tt style="text-align:center;margin-top:10px">${tline()}</p>${npQueue()}`;
 }
@@ -1087,8 +1065,8 @@ function nph(v){
     if(NF&&NF.focus){try{NF.focus()}catch(e){}}
   }
 }
-/* renomear / adicionar à playlist: minimiza a tela para o formulário aparecer por cima */
-function npa(a){const i=cur;nph(0);if(i<0)return;setTimeout(()=>a=='ren'?ren(i):addTo(i),150)}
+/* adicionar à playlist: minimiza a tela para o formulário aparecer por cima */
+function npa(a){const i=cur;nph(0);if(i<0)return;setTimeout(()=>addTo(i),150)}
 
 /* rótulos do botão de aparelhos no player */
 const dlabel=()=>RC?dev(RC).name:'Este aparelho';
@@ -1263,7 +1241,7 @@ function resLib(){
   if(!T.length)return'<p class=sp-s style="padding:8px">Nenhuma música ainda. Use “Adicionar” e escolha os arquivos do aparelho.</p>';
   const q=QL.trim(),pl=playing(),r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
   if(!r.length)return none(q);
-  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${artSt(x.t)}" onclick="MU.pl(${x.i})">${artIc(x.t)}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
+  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${artSt(x.t)}" onclick="MU.pl(${x.i})">${artIc(x.t)}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
 }
 function lcard(){
   const n=dups().length;
@@ -1285,7 +1263,7 @@ function pdet(){
   return`<div class=sp-card><div class=sp-row><button class="sp-btn g sm" onclick="MU.po(null)">Voltar</button><span class=sp-i></span><button class=sp-ib onclick="MU.pe('${p.id}')" title="Editar" aria-label="Editar">${I.edit}</button></div>
 <div class=sp-row style="margin:16px 0;flex-wrap:nowrap">${plcv(p,'width:96px;height:96px;font-size:40px;cursor:default')}<div class=sp-i style="cursor:default"><div class=sp-ti style="text-align:left">${esc(p.name)}</div><p class=sp-s style="margin-top:4px">${L.length} ${L.length==1?'música':'músicas'}</p></div></div>
 <div class=sp-row>${L.length?`<button class=sp-btn onclick="MU.pplay('${p.id}')">Tocar playlist</button>`:''}<label class="sp-btn g sm" style="cursor:pointer">${p.img?'Trocar foto':'Adicionar foto'}<input type=file accept="image/*" hidden onchange="MU.img('${p.id}',this.files[0]);this.value=''"></label>${p.img?`<button class="sp-btn g sm" onclick="MU.noimg('${p.id}')">Remover foto</button>`:''}</div></div>
-${L.map(x=>`<div class="sp-r${x.i==cur&&ctx==p.id?' on':''}"><div class=sp-cv style="${artSt(T[x.i])}" onclick="MU.pp('${p.id}',${x.i})">${artIc(T[x.i])}</div><div class=sp-i onclick="MU.pp('${p.id}',${x.i})"><div class=sp-n>${esc(nm(T[x.i].name))}</div></div><button class=sp-ib onclick="MU.ren(${x.i})" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.pr('${p.id}','${x.k}')" title="Tirar da playlist" aria-label="Tirar da playlist">${I.x}</button></div>`).join('')||'<p class=sp-s style="padding:8px">Playlist vazia. Busque e adicione músicas abaixo.</p>'}`;
+${L.map(x=>`<div class="sp-r${x.i==cur&&ctx==p.id?' on':''}"><div class=sp-cv style="${artSt(T[x.i])}" onclick="MU.pp('${p.id}',${x.i})">${artIc(T[x.i])}</div><div class=sp-i onclick="MU.pp('${p.id}',${x.i})"><div class=sp-n>${esc(nm(T[x.i].name))}</div></div><button class=sp-ib onclick="MU.pr('${p.id}','${x.k}')" title="Tirar da playlist" aria-label="Tirar da playlist">${I.x}</button></div>`).join('')||'<p class=sp-s style="padding:8px">Playlist vazia. Busque e adicione músicas abaixo.</p>'}`;
 }
 function resAdd(){
   const p=pget(PV);if(!p)return'';
@@ -1381,7 +1359,7 @@ return{
   tab(k){TAB=k;draw()},
   menu(v){MENU=v?1:0;draw();window.scrollTo(0,0)},
   goto(p){MENU=0;go(p)},
-  ren,img:setImg,noimg:noImg,
+  img:setImg,noimg:noImg,
   pn:()=>newPL(),po(id){PV=id;if(id)TAB='pls';draw()},pe:editPL,pt:addTo,pplay:playPL,
   pp:(id,i)=>play(i,1,id),
   pa(id,i){const p=pget(id);if(!p)return;const k=key(T[i]);if(!p.keys.includes(k)){p.keys.push(k);touch(p)}draw()},
