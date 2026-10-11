@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-/* Aplica as correções de reprodução + a nova Home ao musica.js original.
-   Uso:  node aplicar_patch.js musica.js            -> grava musica.novo.js
-         node aplicar_patch.js musica.js saida.js   -> grava em saida.js
+/* PATCH 2: gênero + reprodução automática com artistas variados. Rode DEPOIS do aplicar_patch2.js.
+   Uso:  node aplicar_patch2.js musica.js            -> grava musica.novo.js
+         node aplicar_patch2.js musica.js saida.js   -> grava em saida.js
    Cada trecho precisa existir exatamente 1 vez; se algum falhar, NADA é gravado.
    (Os trechos ficam nas linhas "//|" no fim deste arquivo; não apague.) */
 const fs=require('fs');
@@ -21,278 +21,191 @@ for(const b of B){
   if(n!==1){errs.push(b.label+': trecho encontrado '+n+'x (esperado 1x)');continue}
   s=s.split(b.find).join(b.rep);
 }
-if(errs.length){console.log('FALHOU — nada foi gravado:');errs.forEach(e=>console.log(' - '+e));console.log('O musica.js enviado difere do original em algum ponto. Me mande esta mensagem.');process.exit(1)}
+if(errs.length){console.log('FALHOU — nada foi gravado:');errs.forEach(e=>console.log(' - '+e));console.log('Você já rodou o aplicar_patch.js (primeiro) e está usando o musica.js que ele gerou? Se sim, me mande esta mensagem.');process.exit(1)}
 fs.writeFileSync(out,s);
 console.log('OK: '+B.length+' alterações aplicadas. Arquivo completo gravado em '+out+' ('+s.length+' caracteres)');
 process.exit(0);
-//|@@FIND 1.1 estado
-//|let DSO=0,dsF=null,XS={},XE={};
-//|@@REPLACE
-//|let DSO=0,dsF=null,XS={},XE={};
+//|@@FIND A estado
 //|let LD=0,HMC=[],AUTO=0,AX=0;try{AUTO=localStorage.getItem('hub_mauto')=='1'?1:0}catch(e){}
-//|@@END
-//|@@FIND 1.2 TRCK
-//|else if(id=='TALB')o.album=txt(f.subarray(1),e)[0]||'';
 //|@@REPLACE
-//|else if(id=='TALB')o.album=txt(f.subarray(1),e)[0]||'';
-//|    else if(id=='TRCK')o.trk=parseInt(txt(f.subarray(1),e)[0],10)||0;
+//|let LD=0,HMC=[],AUTO=1,AX=0,AP=null,APQ=[],RP=[],GU={},apT=0;try{AUTO=localStorage.getItem('hub_mauto')=='0'?0:1}catch(e){}try{GU=JSON.parse(localStorage.getItem('hub_mgenre'))||{}}catch(e){GU={}}
 //|@@END
-//|@@FIND 1.3 qOf
-//|const qOf=c=>{const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
+//|@@FIND B TCON
+//|else if(id=='TRCK')o.trk=parseInt(txt(f.subarray(1),e)[0],10)||0;
 //|@@REPLACE
-//|/* contexto de uma música avulsa: só ela. Com "Continuar com a biblioteca" ligado (ação do usuário), segue a biblioteca. */
+//|else if(id=='TRCK')o.trk=parseInt(txt(f.subarray(1),e)[0],10)||0;
+//|    else if(id=='TCON')o.genre=txt(f.subarray(1),e).join(';');
+//|@@END
+//|@@FIND C funções
 //|const solo=i=>T[i]&&!AUTO?'one:'+key(T[i]):null;
-//|const trk=m=>(m.tag&&m.tag.trk)||9999;
-//|function ctxL(c){
-//|  if(typeof c!='string')return null;
-//|  if(c.startsWith('one:')){const i=tIdx(c.slice(4));return i<0?[]:[i]}
-//|  const al=c.startsWith('al:'),ar=c.startsWith('ar:');
-//|  if(!al&&!ar)return null;
-//|  const k=c.slice(3),L=[];
-//|  T.forEach((t,i)=>{const m=meta(t);if(al?(m.album&&ak(m.album)==k):crd(m).some(n=>ak(n)==k))L.push(i)});
-//|  const nn_=i=>nm(T[i].name);
-//|  return L.sort((a,b)=>{const x=meta(T[a]),y=meta(T[b]);
-//|    return (al?0:String(x.album).localeCompare(String(y.album)))||(trk(x)-trk(y))||nn_(a).localeCompare(nn_(b))});
+//|@@REPLACE
+//|/* ---- gênero + reprodução automática (mesmo gênero, artistas variados) ----
+//|   Gênero vem SÓ de dados reais: (1) gênero definido pelo usuário, (2) tag TCON do MP3. Sem nenhum dos dois:
+//|   usa as playlists do usuário em que a faixa está (curadoria dele). Sem nenhum dado: não escolhe nada (não inventa). */
+//|const ID3G=['Blues','Classic Rock','Country','Dance','Disco','Funk','Grunge','Hip-Hop','Jazz','Metal','New Age','Oldies','Other','Pop','R&B','Rap','Reggae','Rock','Techno','Industrial','Alternative','Ska','Death Metal','Pranks','Soundtrack','Euro-Techno','Ambient','Trip-Hop','Vocal','Jazz+Funk','Fusion','Trance','Classical','Instrumental','Acid','House','Game','Sound Clip','Gospel','Noise','AlternRock','Bass','Soul','Punk','Space','Meditative','Instrumental Pop','Instrumental Rock','Ethnic','Gothic','Darkwave','Techno-Industrial','Electronic','Pop-Folk','Eurodance','Dream','Southern Rock','Comedy','Cult','Gangsta','Top 40','Christian Rap','Pop/Funk','Jungle','Native American','Cabaret','New Wave','Psychadelic','Rave','Showtunes','Trailer','Lo-Fi','Tribal','Acid Punk','Acid Jazz','Polka','Retro','Musical','Rock & Roll','Hard Rock'];
+//|const GBAD=new Set(['other','outros','outro','unknown','desconhecido','genre','genero','none','various','misc','miscellaneous','undefined','null','n a','music','musica','mp3','download','youtube']);
+//|const GAL={'funk carioca':'funk','funk brasileiro':'funk','baile funk':'funk','funk ostentacao':'funk','funk melody':'funk','mandelao':'funk'};
+//|const gnorm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+//|/* "(13)", "13", "Trap", "Funk;Brega" -> [{k:chave,n:nome}] (descarta valores genéricos como "Other") */
+//|function gList(raw){
+//|  let x=String(raw||'').replace(/\((\d{1,3})\)/g,(m,n)=>';'+(ID3G[+n]||'')+';');
+//|  if(/^\d{1,3}$/.test(x.trim()))x=ID3G[+x.trim()]||'';
+//|  const o=[];
+//|  x.split(/[;\/,|]+/).forEach(p=>{let k=gnorm(p);k=GAL[k]||k;if(k.length>=2&&!GBAD.has(k)&&!o.some(e=>e.k==k))o.push({k,n:p.trim()})});
+//|  return o;
 //|}
-//|const qOf=c=>{const x=ctxL(c);if(x)return x;const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
-//|@@END
-//|@@FIND 1.4a play
-//|function play(i,auto=1,c,back,pos){
-//|@@REPLACE
-//|function play(i,auto=1,c,back,pos){
-//|  if(el._pl){el.removeEventListener('loadedmetadata',el._pl);el._pl=null}
-//|@@END
-//|@@FIND 1.4b ctx
-//|if(c!==undefined){if(c!==ctx)seen.clear();ctx=c}
-//|@@REPLACE
-//|if(c!==undefined){if(c!==ctx)seen.clear();ctx=c;AX=0}
-//|@@END
-//|@@FIND 1.4c pos
-//|if(pos)el.addEventListener('loadedmetadata',()=>{try{el.currentTime=pos}catch(e){}},{once:true});
-//|@@REPLACE
-//|if(pos){const f=()=>{try{el.currentTime=pos}catch(e){}el._pl=null};el._pl=f;el.addEventListener('loadedmetadata',f,{once:true})}
-//|@@END
-//|@@FIND 1.5 killEl
-//|function killEl(a){try{a.pause()}catch(e){}
-//|@@REPLACE
-//|function killEl(a){if(a._pl){a.removeEventListener('loadedmetadata',a._pl);a._pl=null}try{a.pause()}catch(e){}
-//|@@END
-//|@@FIND 1.6a next
-//|const next=()=>{const n=nextI(1);if(n>=0)play(n)};
-//|@@REPLACE
-//|const next=()=>{const q=qOf(ctx);if(q.length<2&&!rep){if(cur>=0){pauseNow();seekTo(0)}return}const n=nextI(1);if(n>=0)play(n)};
-//|@@END
-//|@@FIND 1.6b peek
-//|const peek=()=>{const q=qOf(ctx);if(!q.length)return -1;const p=q.indexOf(cur);
-//|@@REPLACE
-//|const peek=()=>{const q=qOf(ctx);if(!q.length)return -1;if(q.length<2)return rep?q[0]:-1;const p=q.indexOf(cur);
-//|@@END
-//|@@FIND 1.6c toggle
-//|function toggle(){if(cur<0){if(T.length)play(0);return}
-//|@@REPLACE
-//|function toggle(){if(cur<0){if(T.length)play(0,1,null);return}
-//|@@END
-//|@@FIND 1.6d ended
-//|if(shuf||p<q.length-1)next();
-//|@@REPLACE
-//|if(q.length>1&&(shuf||p<q.length-1))next();
-//|@@END
-//|@@FIND 1.7a touch
-//|const touch=p=>{p.u=Date.now();savePL();bpl(p)};
-//|@@REPLACE
-//|const touch=p=>{p.u=Date.now();savePL();bpl(p);if(ctx===p.id)dropPre()};
-//|@@END
-//|@@FIND 1.7b onPl
-//|if(!mergePL(p))return;
-//|@@REPLACE
-//|if(!mergePL(p))return;if(ctx===p.id)dropPre();
-//|@@END
-//|@@FIND 1.7c take
-//|play(i,1,null,0,p);
-//|@@REPLACE
-//|play(i,1,solo(i),0,p);
-//|@@END
-//|@@FIND 1.7d onGo
-//|play(i,m.p?1:0,null,0,p);
-//|@@REPLACE
-//|play(i,m.p?1:0,solo(i),0,p);
-//|@@END
-//|@@FIND 1.7e exec
-//|else if(a=='pl')play(+v,1,null);
-//|@@REPLACE
-//|else if(a=='pl')play(+v,1,solo(+v));
-//|@@END
-//|@@FIND 1.8a playPL
-//|play(shuf?q[Math.floor(Math.random()*q.length)]:q[0],1,id);
-//|@@REPLACE
-//|seen.clear();play(shuf?q[Math.floor(Math.random()*q.length)]:q[0],1,id);
-//|@@END
-//|@@FIND 1.8b novas funções
-//|function playPL(id){
-//|@@REPLACE
-//|function playSolo(i){if(!T[i])return;RC=null;play(i,1,solo(i));AX=AUTO}
-//|function ptog(c){
-//|  if(!c)return;const q=qOf(c);if(!q.length)return;
-//|  if(!RC&&ctx===c&&cur>=0&&q.includes(cur)){toggle();return}
-//|  playPL(c);
-//|}
-//|function setAuto(v){
-//|  AUTO=v?1:0;try{localStorage.setItem('hub_mauto',AUTO?'1':'0')}catch(e){}
-//|  if(cur>=0&&T[cur]){
-//|    if(AUTO&&typeof ctx=='string'&&ctx.startsWith('one:')){ctx=null;seen.clear();AX=1}
-//|    else if(!AUTO&&AX&&ctx===null){ctx='one:'+key(T[cur]);AX=0}
+//|const gOf=t=>{const k=key(t),u=GU[k];if(u!=null&&String(u).trim())return{src:'user',L:gList(u)};const m=meta(t);return{src:'tag',L:m.tag&&m.tag.genre?gList(m.tag.genre):[]}};
+//|/* referência da reprodução automática: fixada na música ESCOLHIDA (não "deriva" com as faixas seguintes) */
+//|function apSeed(i){
+//|  const t=T[i];if(!t)return;
+//|  const g=gOf(t),sk=key(t);
+//|  AP={sk,rd:!!meta(t).rd||g.src=='user',g:new Set(g.L.map(e=>e.k)),pk:null,label:'',basis:''};
+//|  if(g.L.length){AP.label=g.L.map(e=>e.n).join(' / ');AP.basis=(g.src=='user'?'gênero definido por você':'gênero da tag do arquivo')+' ('+AP.label+')'}
+//|  else{
+//|    const pk=new Set();pls().forEach(p=>{if(p.keys.includes(sk))p.keys.forEach(k=>{if(k!=sk)pk.add(k)})});
+//|    AP.pk=pk;if(pk.size){AP.label='Playlists em comum';AP.basis='as playlists em que esta música está (ela não tem tag de gênero)'}
 //|  }
-//|  dropPre();draw();sched();
+//|  APQ=[];
 //|}
-//|function cinfo(){
-//|  if(typeof ctx=='string'){
-//|    if(ctx.startsWith('al:')){const t=T[qOf(ctx)[0]];return{k:'Tocando do álbum',n:t?meta(t).album:'Álbum'}}
-//|    if(ctx.startsWith('ar:')){const k=ctx.slice(3);let n='Artista';qOf(ctx).some(i=>crd(meta(T[i])).some(x=>ak(x)==k&&(n=x)));return{k:'Tocando do artista',n}}
+//|const apOk=t=>AP.g.size?gOf(t).L.some(e=>AP.g.has(e.k)):!!(AP.pk&&AP.pk.has(key(t)));
+//|const apArs=i=>{const m=meta(T[i]),L=crd(m).map(ak).filter(Boolean);return L.length?L:['~'+key(T[i])]};
+//|/* escolhe a próxima: mesmo gênero, artista diferente dos últimos, sem repetir faixa recente. Sorteia o ARTISTA primeiro (cada artista
+//|   pesa igual, para quem tem mais músicas não dominar) e depois a faixa dele. Se tudo foi tocado, recicla as mais antigas. */
+//|function apPick(pool,planned){
+//|  const rk=RP.concat(planned.map(i=>key(T[i]))),lp=i=>rk.lastIndexOf(key(T[i]));
+//|  const ra=rk.slice(-4).map(k=>{const i=tIdx(k);return i<0?[]:apArs(i)});
+//|  const near=(i,w)=>{if(!w)return false;const a=apArs(i);return ra.slice(-w).some(s=>s.some(x=>a.includes(x)))};
+//|  const choose=c=>{const G=new Map();c.forEach(i=>{const k=apArs(i)[0];if(!G.has(k))G.set(k,[]);G.get(k).push(i)});const g=[...G.values()],l=g[Math.floor(Math.random()*g.length)];return l[Math.floor(Math.random()*l.length)]};
+//|  const free=pool.filter(i=>!planned.includes(i));
+//|  if(!free.length)return -1;
+//|  for(const w of [3,2,1,0]){const c=free.filter(i=>lp(i)<0&&!near(i,w));if(c.length)return choose(c)}
+//|  free.sort((a,b)=>lp(a)-lp(b));
+//|  const old=free.slice(0,Math.max(1,Math.ceil(free.length/2))),c2=old.filter(i=>!near(i,1));
+//|  return choose(c2.length?c2:old);
+//|}
+//|function apFill(){
+//|  if(ctx!=='auto'||!AP||cur<0)return;
+//|  APQ=APQ.filter(i=>i>=0&&i<T.length&&i!=cur);
+//|  const pool=[];T.forEach((t,i)=>{if(i!=cur&&apOk(t))pool.push(i)});
+//|  const pl=APQ.slice();
+//|  while(pl.length<6){const i=apPick(pool,pl);if(i<0)break;pl.push(i)}
+//|  APQ=pl;
+//|}
+//|function noteStart(i){
+//|  if(!T[i])return;
+//|  RP.push(key(T[i]));if(RP.length>80)RP.shift();
+//|  if(ctx==='auto'){APQ=APQ.filter(x=>x!==i);apFill()}
+//|}
+//|/* tags de outras faixas terminam de ser lidas depois: replaneja (com atraso) */
+//|function apRefresh(){
+//|  clearTimeout(apT);
+//|  apT=setTimeout(()=>{
+//|    if(ctx!=='auto'||!AP||cur<0||!T[cur])return;
+//|    const si=tIdx(AP.sk);if(!AP.rd&&si>=0&&meta(T[si]).rd)apSeed(si);
+//|    APQ=[];apFill();dropPre();
+//|    if(NPO)npUpd();
+//|    if(typeof page!='undefined'&&page=='mus')draw();
+//|  },400);
+//|}
+//|function genBox(){
+//|  const t=cur>=0&&T[cur];if(!t)return'';
+//|  const g=gOf(t),x=g.L.length?g.L.map(e=>esc(e.n)).join(' / ')+' · '+(g.src=='user'?'definido por você':'tag do arquivo'):'não identificado (a tag do arquivo não informa)';
+//|  return'<p class=sp-s style="margin:12px 0 6px">Gênero: '+x+'</p><button class="sp-btn g sm" onclick="MU.sg()">Definir gênero</button>';
+//|}
+//|function apQueueHtml(h){
+//|  const L=APQ.filter(j=>T[j]);
+//|  const b=AP&&AP.basis?'<p class=sp-s style="margin-bottom:8px">Baseada em '+esc(AP.basis)+'. Artistas diferentes, sem repetir músicas recentes. A classificação vem dos dados do arquivo e pode não ser exata.</p>':'';
+//|  const off='<div style="margin-top:12px"><button class="sp-btn g sm" onclick="MU.auto()">Desligar reprodução automática</button></div>';
+//|  if(!L.length)return h+b+'<p class=sp-s>'+(AP&&(AP.g.size||(AP.pk&&AP.pk.size))?'Não há outras músicas desse estilo, de artistas diferentes, na biblioteca.':'Esta música não tem gênero confiável (tag ausente) nem playlist em comum, então não há de onde escolher. Defina o gênero abaixo.')+'</p>'+genBox()+off;
+//|  return h+b+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||UNK)}</p></div></div>`).join('')+genBox()+off;
+//|}
+//|function setGenreUi(){
+//|  const t=cur>=0&&T[cur];if(!t)return;
+//|  const k=key(t);
+//|  nph(0);
+//|  setTimeout(()=>fm('Gênero da música',[{k:'g',l:'Gênero (ex.: Trap, Funk). Vazio = usar a tag do arquivo.',v:GU[k]||''}],o=>{
+//|    const v=String(o.g||'').trim();if(v)GU[k]=v;else delete GU[k];
+//|    try{localStorage.setItem('hub_mgenre',JSON.stringify(GU))}catch(e){}
+//|    if(ctx==='auto'&&AP&&AP.sk==k)apSeed(cur);
+//|    apRefresh();draw();
+//|  }),150);
+//|}
+//|const solo=i=>{if(!T[i])return null;if(AUTO){apSeed(i);return'auto'}return'one:'+key(T[i])};
+//|@@END
+//|@@FIND D qOf
+//|const qOf=c=>{const x=ctxL(c);if(x)return x;
+//|@@REPLACE
+//|const qOf=c=>{if(c==='auto')return cur>=0&&T[cur]?[cur].concat(APQ):[];const x=ctxL(c);if(x)return x;
+//|@@END
+//|@@FIND E nextI
+//|if(shuf&&q.length>1){
+//|@@REPLACE
+//|if(shuf&&q.length>1&&ctx!=='auto'){
+//|@@END
+//|@@FIND F prev
+//|const prev=()=>{if(curPos()>3)seekTo(0);else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
+//|@@REPLACE
+//|const prev=()=>{if(curPos()>3)seekTo(0);else if((shuf||ctx==='auto')&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else if(ctx==='auto')seekTo(0);else{const n=nextI(-1);if(n>=0)play(n)}};
+//|@@END
+//|@@FIND G play
+//|cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});
+//|@@REPLACE
+//|cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});noteStart(i);
+//|@@END
+//|@@FIND H handoff
+//|cur=i;el=a;
+//|@@REPLACE
+//|cur=i;el=a;noteStart(i);
+//|@@END
+//|@@FIND I meta
+//|if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg();lyLoad()}
+//|@@REPLACE
+//|if(ctx==='auto')apRefresh();if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg();lyLoad()}
+//|@@END
+//|@@FIND J rótulo
+//|Continuar com a biblioteca: ${AUTO?'ligado':'desligado'}
+//|@@REPLACE
+//|Reprodução automática (mesmo gênero): ${AUTO?'ligada':'desligada'}
+//|@@END
+//|@@FIND K npQueue avulsa
+//|Você escolheu uma música avulsa. Nada toca depois dela, a menos que você ligue “Continuar com a biblioteca”.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="MU.auto()">Continuar com a biblioteca</button>
+//|@@REPLACE
+//|Reprodução automática desligada: nada toca depois desta música.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="MU.auto()">Ligar reprodução automática</button>'+genBox()+'
+//|@@END
+//|@@FIND L npQueue auto
+//|let h='<div class=np-h>A seguir</div>';
+//|@@REPLACE
+//|let h='<div class=np-h>A seguir</div>';
+//|  if(ctx==='auto')return apQueueHtml(h);
+//|@@END
+//|@@FIND M setAuto on
+//|if(AUTO&&typeof ctx=='string'&&ctx.startsWith('one:')){ctx=null;seen.clear();AX=1}
+//|@@REPLACE
+//|if(AUTO&&typeof ctx=='string'&&ctx.startsWith('one:')){apSeed(cur);ctx='auto';seen.clear();AX=1;apFill()}
+//|@@END
+//|@@FIND N setAuto off
+//|else if(!AUTO&&AX&&ctx===null){ctx='one:'+key(T[cur]);AX=0}
+//|@@REPLACE
+//|else if(!AUTO&&ctx==='auto'){ctx='one:'+key(T[cur]);APQ=[];AX=0}
+//|@@END
+//|@@FIND O cinfo
+//|if(ctx.startsWith('one:'))return{k:'Tocando agora',n:'Música selecionada'};
+//|@@REPLACE
+//|if(ctx==='auto')return{k:'Reprodução automática',n:AP&&AP.label?AP.label:'Mesmo gênero'};
 //|    if(ctx.startsWith('one:'))return{k:'Tocando agora',n:'Música selecionada'};
-//|  }
-//|  const p=ctx&&pget(ctx);return{k:p?'Tocando da playlist':'Tocando agora',n:p?p.name:'Suas músicas'};
-//|}
-//|function playPL(id){
 //|@@END
-//|@@FIND 1.9a npBody
-//|const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t);
+//|@@FIND P export
+//|auto(){setAuto(!AUTO)},
 //|@@REPLACE
-//|const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t),ci=cinfo();
+//|auto(){setAuto(!AUTO)},sg(){setGenreUi()},
 //|@@END
-//|@@FIND 1.9b npBody rótulo
-//|<small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b>
+//|@@FIND Q del
+//|const dk=key(T[i]);T.splice(i,1);KM=null;hist=[];
 //|@@REPLACE
-//|<small>${ci.k}</small><b>${esc(ci.n)}</b>
+//|const dk=key(T[i]);T.splice(i,1);KM=null;hist=[];APQ=[];if(ctx==='auto')apRefresh();
 //|@@END
-//|@@FIND 1.9c npQueue
-//|let h='<div class=np-h>A seguir</div>';
+//|@@FIND R rmExact
+//|T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];dropPre();
 //|@@REPLACE
-//|let h='<div class=np-h>A seguir</div>';
-//|  if(typeof ctx=='string'&&ctx.startsWith('one:'))return h+'<p class=sp-s>Você escolheu uma música avulsa. Nada toca depois dela, a menos que você ligue “Continuar com a biblioteca”.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="MU.auto()">Continuar com a biblioteca</button>';
-//|@@END
-//|@@FIND 1.10 lcard
-//|${T.length>1?`<button class="sp-btn g sm" style="margin-bottom:12px" onclick="MU.dp()">
-//|@@REPLACE
-//|${T.length?`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn sm" onclick="MU.pall()">Tocar biblioteca</button><button class="sp-btn g sm" role=switch aria-checked="${AUTO?'true':'false'}" onclick="MU.auto()">Continuar com a biblioteca: ${AUTO?'ligado':'desligado'}</button></div>`:''}
-//|${T.length>1?`<button class="sp-btn g sm" style="margin-bottom:12px" onclick="MU.dp()">
-//|@@END
-//|@@FIND 1.11a export sp
-//|sp(i){const t=T[i];if(!t)return;recAdd(key(t));RC=null;play(i,1,null)},
-//|@@REPLACE
-//|sp(i){const t=T[i];if(!t)return;recAdd(key(t));playSolo(i)},
-//|  ps:playSolo,hs(i){if(!RC&&cur==i&&cur>=0){toggle();return}playSolo(i)},hp(n){ptog(HMC[n])},auto(){setAuto(!AUTO)},pall:()=>playPL(null),
-//|@@END
-//|@@FIND 1.11b export pl
-//|pl:i=>{RC=null;play(i,1,null)},rm:del,
-//|@@REPLACE
-//|pl:playSolo,rm:del,
-//|@@END
-//|@@FIND 2.1 loader
-//|dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;migStats();draw();bls()}).catch(()=>{fail=1;draw()});
-//|@@REPLACE
-//|dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;LD=1;migStats();draw();bls()}).catch(()=>{fail=1;LD=1;draw()});
-//|@@END
-//|@@FIND 2.2 home
-//|function home(){
-//|@@REPLACE
-//|/* ---- Home (estilo Spotify). Só usa dados reais: biblioteca, playlists, tags ID3 e histórico de escuta (células). ---- */
-//|const hmGreet=()=>{const h=new Date().getHours();return h<5?'Boa madrugada':h<12?'Bom dia':h<18?'Boa tarde':'Boa noite'};
-//|const hmReg=c=>{HMC.push(c);return HMC.length-1};
-//|const hmOn=c=>!RC&&cur>=0&&ctx===c&&playing();
-//|const hmCv=t=>`<div class=hm-cv style="${t?artSt(t):'background:var(--mu-hi)'}">${t?artIc(t):I.note}</div>`;
-//|const hmSk=(n,r)=>'<div class=hm-row>'+Array(n).fill(0).map(()=>'<div class="hm-c hm-sk"><div class="hm-im'+(r?' r':'')+'"></div><div class=hm-n>&nbsp;</div><div class=hm-s>&nbsp;</div></div>').join('')+'</div>';
-//|const hmSec=(t,body,act)=>`<section class=hm-sec><div class=hm-h><h2>${t}</h2>${act||''}</div>${body}</section>`;
-//|const hmCard=o=>`<div class="hm-c${o.pl?' on':''}" role=button tabindex=0 onclick="${o.go}" onkeydown="${KB}" aria-label="${esc(o.n)}"><div class="hm-im${o.r?' r':''}">${o.cv}<button class="hm-pb${o.pl?' on':''}" onclick="event.stopPropagation();${o.fn}" aria-label="${o.pl?'Pausar':'Tocar'} ${esc(o.n)}">${o.pl?I.pause:I.play}</button></div><div class=hm-n>${esc(o.n)}</div><div class=hm-s>${esc(o.s)}</div></div>`;
-//|const hmMsg=t=>`<p class=sp-s style="padding:4px 2px 8px">${t}</p>`;
-//|/* histórico real: células de escuta (sincronizadas entre aparelhos), só faixas que existem neste aparelho */
-//|function hmHist(){
-//|  const ix=new Map(T.map((t,i)=>[nm(t.name),i]));
-//|  return Object.values(CL.c).filter(c=>c.u>0&&(c.s>=10||c.p)&&ix.has(c.n)).sort((a,b)=>b.u-a.u).map(c=>({i:ix.get(c.n),pl:c.pl&&pget(c.pl)?c.pl:''}));
-//|}
-//|/* álbuns e artistas vêm das tags/nomes já identificados (meta) */
-//|function hmGroups(){
-//|  const S=stGet(),al=new Map(),ar=new Map();
-//|  T.forEach((t,i)=>{
-//|    const m=meta(t),sec=(S.tr[nm(t.name)]||{}).s||0;
-//|    if(m.album){const k=ak(m.album);let g=al.get(k);if(!g){g={k,n:m.album,L:[],s:0,A:new Map(),aa:''};al.set(k,g)}
-//|      g.L.push(i);g.s+=sec;m.artists.forEach(n=>g.A.set(ak(n),n));if(!g.aa&&m.tag&&m.tag.albumArtist)g.aa=parseArt(m.tag.albumArtist).main.join(', ')}
-//|    crd(m).forEach(n=>{const k=ak(n);let g=ar.get(k);if(!g){g={k,n,L:[],s:0};ar.set(k,g)}g.L.push(i)});
-//|  });
-//|  ar.forEach(g=>{g.s=(S.a2[g.k]||{}).s||0});
-//|  const by=(a,b)=>(b.s-a.s)||(b.L.length-a.L.length)||a.n.localeCompare(b.n);
-//|  return{al:[...al.values()].sort(by).slice(0,20),ar:[...ar.values()].sort(by).slice(0,20)};
-//|}
-//|function hmChip(s){
-//|  if(s.p){const p=pget(s.p);if(!p)return'';const c=p.id,r=hmReg(c),on=hmOn(c);
-//|    return`<div class="hm-ch${on?' on':''}" role=button tabindex=0 onclick="MU.po('${p.id}')" onkeydown="${KB}">${plcv(p)}<span class=hm-cn>${esc(p.name)}</span><button class="hm-pb sm${on?' on':''}" onclick="event.stopPropagation();MU.hp(${r})" aria-label="${on?'Pausar':'Tocar'} ${esc(p.name)}">${on?I.pause:I.play}</button></div>`}
-//|  const t=T[s.i];if(!t)return'';const on=!RC&&cur==s.i&&playing();
-//|  return`<div class="hm-ch${on?' on':''}" role=button tabindex=0 onclick="MU.hs(${s.i})" onkeydown="${KB}"><div class=sp-cv style="${artSt(t)}">${artIc(t)}</div><span class=hm-cn>${esc(meta(t).title)}</span><button class="hm-pb sm${on?' on':''}" onclick="event.stopPropagation();MU.hs(${s.i})" aria-label="${on?'Pausar':'Tocar'} ${esc(meta(t).title)}">${on?I.pause:I.play}</button></div>`;
-//|}
-//|function home(){
-//|  HMC=[];
-//|  const head=`<h1 class=hm-hi>${hmGreet()}</h1>`;
-//|  if(fail)return ban()+head+`<div class="sp-card hm-err" role=alert><div class=sp-ti style="font-size:17px">Não foi possível abrir a biblioteca</div><p class=sp-s style="margin:6px 0 12px">O armazenamento deste navegador não está disponível (modo privado ou bloqueado), então as músicas não podem ser carregadas.</p><button class=sp-btn onclick="location.reload()">Tentar de novo</button></div>`;
-//|  if(!LD)return head+hmSec('Carregando sua música…',hmSk(6));
-//|  const L=pls(),H=hmHist(),pend=T.some(t=>!meta(t).rd),G=hmGroups();
-//|  /* atalhos: contextos ouvidos há pouco (playlist ou faixa), completados com playlists */
-//|  const sc=[],ks=new Set(),add=(k,o)=>{if(!ks.has(k)&&sc.length<8){ks.add(k);sc.push(o)}};
-//|  H.forEach(h=>h.pl?add('p'+h.pl,{p:h.pl}):add('t'+h.i,{i:h.i}));
-//|  L.slice().sort((a,b)=>(b.u||0)-(a.u||0)).forEach(p=>add('p'+p.id,{p:p.id}));
-//|  /* faixas recentes sem repetir */
-//|  const rs=new Set(),rec=[];H.forEach(h=>{if(!rs.has(h.i)&&rec.length<12){rs.add(h.i);rec.push(h.i)}});
-//|  const recH=rec.map(i=>{const t=T[i],m=meta(t);return hmCard({go:`MU.hs(${i})`,fn:`MU.hs(${i})`,n:m.title,s:m.artist||UNK,cv:hmCv(t),pl:!RC&&cur==i&&playing()})}).join('');
-//|  const plH=L.map(p=>{const n=p.keys.filter(k=>tIdx(k)>=0).length,r=hmReg(p.id);
-//|    return hmCard({go:`MU.po('${p.id}')`,fn:`MU.hp(${r})`,n:p.name,s:n+(n==1?' música':' músicas'),cv:plcv(p),pl:hmOn(p.id)})}).join('');
-//|  const alH=G.al.map(g=>{const r=hmReg('al:'+g.k),t=g.L.map(i=>T[i]).find(t=>meta(t).cover)||T[g.L[0]],sub=g.aa||(g.A.size>1?'Vários artistas':([...g.A.values()][0]||UNK));
-//|    return hmCard({go:`MU.hp(${r})`,fn:`MU.hp(${r})`,n:g.n,s:sub+' · '+g.L.length+(g.L.length==1?' música':' músicas'),cv:hmCv(t),pl:hmOn('al:'+g.k)})}).join('');
-//|  const arH=G.ar.map(g=>{const r=hmReg('ar:'+g.k),t=g.L.map(i=>T[i]).find(t=>meta(t).cover);
-//|    return hmCard({go:`MU.hp(${r})`,fn:`MU.hp(${r})`,n:g.n,s:g.L.length+(g.L.length==1?' música':' músicas'),r:1,
-//|      cv:t?hmCv(t):`<div class=hm-cv style="background:var(--mu-hi)">${esc(g.n.trim().charAt(0).toUpperCase()||'?')}</div>`,pl:hmOn('ar:'+g.k)})}).join('');
-//|  const sk=(h,n,r)=>h?`<div class=hm-row>${h}</div>`:(pend?hmSk(n,r):null);
-//|  return ban()+head
-//|   +(!T.length?`<div class=sp-card><p class=sp-s>Sua biblioteca está vazia.</p><label class=sp-btn style="margin-top:10px;cursor:pointer">Adicionar músicas<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>`:'')
-//|   +(sc.length?`<div class=hm-sc>${sc.map(hmChip).join('')}</div>`:'')
-//|   +(T.length?hmSec('Tocadas recentemente',recH?`<div class=hm-row>${recH}</div>`:hmMsg('Quando você ouvir músicas, elas aparecem aqui.')):'')
-//|   +hmSec('Suas playlists',plH?`<div class=hm-row>${plH}</div>`:hmMsg('Você ainda não criou playlists.'),`<button class="sp-btn g sm" onclick="MU.pn()">Nova</button>`)
-//|   +(T.length?hmSec('Álbuns',sk(alH,5)||hmMsg('Nenhum álbum identificado. O álbum é lido das tags de MP3 (ID3v2.3/2.4).')):'')
-//|   +(T.length?hmSec('Artistas',sk(arH,5,1)||hmMsg('Nenhum artista identificado. Use MP3 com tag de artista ou nomes “Cantor - Música”.')):'');
-//|}
-//|function homeOld(){
-//|@@END
-//|@@FIND 2.3 css
-//|@media(min-width:720px){.st-c2{min-height:230px}.st-ci{width:132px}.st-c3{width:96px}}
-//|@@REPLACE
-//|@media(min-width:720px){.st-c2{min-height:230px}.st-ci{width:132px}.st-c3{width:96px}}
-//|.hm-hi{font-size:clamp(24px,6vw,32px);font-weight:800;letter-spacing:-.02em;margin:4px 0 16px}
-//|.hm-sec{margin-bottom:6px}
-//|.hm-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:24px 0 12px}
-//|.hm-h h2{font-size:20px;font-weight:700;margin:0}
-//|.hm-sc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-//|@media(min-width:720px){.hm-sc{grid-template-columns:repeat(4,minmax(0,1fr))}}
-//|.hm-ch{display:flex;align-items:center;gap:10px;height:56px;background:#ffffff14;border-radius:6px;overflow:hidden;cursor:pointer;transition:background .2s;padding-right:8px}
-//|.hm-ch:hover,.hm-ch:focus-visible{background:#ffffff26}
-//|.hm-ch .sp-cv{width:56px;height:56px;border-radius:0;font-size:20px;flex:none;cursor:inherit}
-//|.hm-cn{flex:1;min-width:0;font-size:13px;font-weight:700;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-//|.hm-ch.on .hm-cn,.hm-c.on .hm-n{color:#1db954}
-//|.hm-row{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 10px;scroll-snap-type:x proximity;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#444 transparent}
-//|.hm-c{flex:0 0 148px;scroll-snap-align:start;background:var(--mu-panel);border-radius:10px;padding:12px;cursor:pointer;transition:background .2s;min-width:0}
-//|@media(min-width:720px){.hm-c{flex-basis:180px}}
-//|.hm-c:hover,.hm-c:focus-visible{background:var(--mu-hi)}
-//|.hm-im{position:relative;width:100%;aspect-ratio:1;border-radius:8px;box-shadow:0 8px 20px #0006;margin-bottom:12px;background:var(--mu-hi)}
-//|.hm-im.r{border-radius:50%}
-//|.hm-cv{width:100%;height:100%;border-radius:inherit;display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:800;color:#ffffff88;overflow:hidden}
-//|.hm-im .sp-cv{width:100%;height:100%;border-radius:inherit;cursor:inherit}
-//|.hm-pb{position:absolute;right:8px;bottom:8px;width:44px;height:44px;border-radius:50%;background:#1db954;color:#000;border:0;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 16px #0006;opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s,background .15s}
-//|.hm-pb.sm{position:static;width:36px;height:36px;font-size:16px;flex:none;box-shadow:none;transform:none}
-//|.hm-c:hover .hm-pb,.hm-c:focus-within .hm-pb,.hm-ch:hover .hm-pb,.hm-ch:focus-within .hm-pb,.hm-pb.on{opacity:1;transform:none}
-//|.hm-pb:hover{background:#1ed760}
-//|@media(hover:none){.hm-pb{opacity:1;transform:none;width:40px;height:40px}.hm-pb.sm{width:36px;height:36px}}
-//|.hm-n{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-//|.hm-s{font-size:13px;color:var(--mu-dim);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-//|.hm-sk{pointer-events:none}
-//|.hm-sk .hm-im,.hm-sk .hm-n,.hm-sk .hm-s{background:linear-gradient(90deg,#2a2a2a,#353535,#2a2a2a);background-size:200% 100%;animation:hm-sh 1.4s linear infinite;color:transparent;border-radius:6px}
-//|.hm-sk .hm-im.r{border-radius:50%}
-//|@keyframes hm-sh{to{background-position:-200% 0}}
-//|.hm-err{box-shadow:inset 0 0 0 1px #ff6b6b66}
-//|@media(prefers-reduced-motion:reduce){.hm-sk *{animation:none!important}.hm-pb,.hm-c,.hm-ch{transition:none}}
+//|T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];APQ=[];if(ctx==='auto')apRefresh();dropPre();
 //|@@END

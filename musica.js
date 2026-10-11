@@ -23,7 +23,7 @@ let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],D
 let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0,STV=0;
 /* estado do painel de aparelhos */
 let DSO=0,dsF=null,XS={},XE={};
-let LD=0,HMC=[],AUTO=0,AX=0;try{AUTO=localStorage.getItem('hub_mauto')=='1'?1:0}catch(e){}
+let LD=0,HMC=[],AUTO=1,AX=0,AP=null,APQ=[],RP=[],GU={},apT=0;try{AUTO=localStorage.getItem('hub_mauto')=='0'?0:1}catch(e){}try{GU=JSON.parse(localStorage.getItem('hub_mgenre'))||{}}catch(e){GU={}}
 /* estado da tela "Tocando agora" */
 let NPO=0,NF=null;
 
@@ -216,7 +216,98 @@ const matches=(name,q)=>mt(nm(name),q);
 const kmap=()=>KM||(KM=new Map(T.map((x,i)=>[key(x),i])));
 const tIdx=k=>{const i=kmap().get(k);return i==null?-1:i};
 /* contexto de uma música avulsa: só ela. Com "Continuar com a biblioteca" ligado (ação do usuário), segue a biblioteca. */
-const solo=i=>T[i]&&!AUTO?'one:'+key(T[i]):null;
+/* ---- gênero + reprodução automática (mesmo gênero, artistas variados) ----
+   Gênero vem SÓ de dados reais: (1) gênero definido pelo usuário, (2) tag TCON do MP3. Sem nenhum dos dois:
+   usa as playlists do usuário em que a faixa está (curadoria dele). Sem nenhum dado: não escolhe nada (não inventa). */
+const ID3G=['Blues','Classic Rock','Country','Dance','Disco','Funk','Grunge','Hip-Hop','Jazz','Metal','New Age','Oldies','Other','Pop','R&B','Rap','Reggae','Rock','Techno','Industrial','Alternative','Ska','Death Metal','Pranks','Soundtrack','Euro-Techno','Ambient','Trip-Hop','Vocal','Jazz+Funk','Fusion','Trance','Classical','Instrumental','Acid','House','Game','Sound Clip','Gospel','Noise','AlternRock','Bass','Soul','Punk','Space','Meditative','Instrumental Pop','Instrumental Rock','Ethnic','Gothic','Darkwave','Techno-Industrial','Electronic','Pop-Folk','Eurodance','Dream','Southern Rock','Comedy','Cult','Gangsta','Top 40','Christian Rap','Pop/Funk','Jungle','Native American','Cabaret','New Wave','Psychadelic','Rave','Showtunes','Trailer','Lo-Fi','Tribal','Acid Punk','Acid Jazz','Polka','Retro','Musical','Rock & Roll','Hard Rock'];
+const GBAD=new Set(['other','outros','outro','unknown','desconhecido','genre','genero','none','various','misc','miscellaneous','undefined','null','n a','music','musica','mp3','download','youtube']);
+const GAL={'funk carioca':'funk','funk brasileiro':'funk','baile funk':'funk','funk ostentacao':'funk','funk melody':'funk','mandelao':'funk'};
+const gnorm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+/* "(13)", "13", "Trap", "Funk;Brega" -> [{k:chave,n:nome}] (descarta valores genéricos como "Other") */
+function gList(raw){
+  let x=String(raw||'').replace(/\((\d{1,3})\)/g,(m,n)=>';'+(ID3G[+n]||'')+';');
+  if(/^\d{1,3}$/.test(x.trim()))x=ID3G[+x.trim()]||'';
+  const o=[];
+  x.split(/[;\/,|]+/).forEach(p=>{let k=gnorm(p);k=GAL[k]||k;if(k.length>=2&&!GBAD.has(k)&&!o.some(e=>e.k==k))o.push({k,n:p.trim()})});
+  return o;
+}
+const gOf=t=>{const k=key(t),u=GU[k];if(u!=null&&String(u).trim())return{src:'user',L:gList(u)};const m=meta(t);return{src:'tag',L:m.tag&&m.tag.genre?gList(m.tag.genre):[]}};
+/* referência da reprodução automática: fixada na música ESCOLHIDA (não "deriva" com as faixas seguintes) */
+function apSeed(i){
+  const t=T[i];if(!t)return;
+  const g=gOf(t),sk=key(t);
+  AP={sk,rd:!!meta(t).rd||g.src=='user',g:new Set(g.L.map(e=>e.k)),pk:null,label:'',basis:''};
+  if(g.L.length){AP.label=g.L.map(e=>e.n).join(' / ');AP.basis=(g.src=='user'?'gênero definido por você':'gênero da tag do arquivo')+' ('+AP.label+')'}
+  else{
+    const pk=new Set();pls().forEach(p=>{if(p.keys.includes(sk))p.keys.forEach(k=>{if(k!=sk)pk.add(k)})});
+    AP.pk=pk;if(pk.size){AP.label='Playlists em comum';AP.basis='as playlists em que esta música está (ela não tem tag de gênero)'}
+  }
+  APQ=[];
+}
+const apOk=t=>AP.g.size?gOf(t).L.some(e=>AP.g.has(e.k)):!!(AP.pk&&AP.pk.has(key(t)));
+const apArs=i=>{const m=meta(T[i]),L=crd(m).map(ak).filter(Boolean);return L.length?L:['~'+key(T[i])]};
+/* escolhe a próxima: mesmo gênero, artista diferente dos últimos, sem repetir faixa recente. Sorteia o ARTISTA primeiro (cada artista
+   pesa igual, para quem tem mais músicas não dominar) e depois a faixa dele. Se tudo foi tocado, recicla as mais antigas. */
+function apPick(pool,planned){
+  const rk=RP.concat(planned.map(i=>key(T[i]))),lp=i=>rk.lastIndexOf(key(T[i]));
+  const ra=rk.slice(-4).map(k=>{const i=tIdx(k);return i<0?[]:apArs(i)});
+  const near=(i,w)=>{if(!w)return false;const a=apArs(i);return ra.slice(-w).some(s=>s.some(x=>a.includes(x)))};
+  const choose=c=>{const G=new Map();c.forEach(i=>{const k=apArs(i)[0];if(!G.has(k))G.set(k,[]);G.get(k).push(i)});const g=[...G.values()],l=g[Math.floor(Math.random()*g.length)];return l[Math.floor(Math.random()*l.length)]};
+  const free=pool.filter(i=>!planned.includes(i));
+  if(!free.length)return -1;
+  for(const w of [3,2,1,0]){const c=free.filter(i=>lp(i)<0&&!near(i,w));if(c.length)return choose(c)}
+  free.sort((a,b)=>lp(a)-lp(b));
+  const old=free.slice(0,Math.max(1,Math.ceil(free.length/2))),c2=old.filter(i=>!near(i,1));
+  return choose(c2.length?c2:old);
+}
+function apFill(){
+  if(ctx!=='auto'||!AP||cur<0)return;
+  APQ=APQ.filter(i=>i>=0&&i<T.length&&i!=cur);
+  const pool=[];T.forEach((t,i)=>{if(i!=cur&&apOk(t))pool.push(i)});
+  const pl=APQ.slice();
+  while(pl.length<6){const i=apPick(pool,pl);if(i<0)break;pl.push(i)}
+  APQ=pl;
+}
+function noteStart(i){
+  if(!T[i])return;
+  RP.push(key(T[i]));if(RP.length>80)RP.shift();
+  if(ctx==='auto'){APQ=APQ.filter(x=>x!==i);apFill()}
+}
+/* tags de outras faixas terminam de ser lidas depois: replaneja (com atraso) */
+function apRefresh(){
+  clearTimeout(apT);
+  apT=setTimeout(()=>{
+    if(ctx!=='auto'||!AP||cur<0||!T[cur])return;
+    const si=tIdx(AP.sk);if(!AP.rd&&si>=0&&meta(T[si]).rd)apSeed(si);
+    APQ=[];apFill();dropPre();
+    if(NPO)npUpd();
+    if(typeof page!='undefined'&&page=='mus')draw();
+  },400);
+}
+function genBox(){
+  const t=cur>=0&&T[cur];if(!t)return'';
+  const g=gOf(t),x=g.L.length?g.L.map(e=>esc(e.n)).join(' / ')+' · '+(g.src=='user'?'definido por você':'tag do arquivo'):'não identificado (a tag do arquivo não informa)';
+  return'<p class=sp-s style="margin:12px 0 6px">Gênero: '+x+'</p><button class="sp-btn g sm" onclick="MU.sg()">Definir gênero</button>';
+}
+function apQueueHtml(h){
+  const L=APQ.filter(j=>T[j]);
+  const b=AP&&AP.basis?'<p class=sp-s style="margin-bottom:8px">Baseada em '+esc(AP.basis)+'. Artistas diferentes, sem repetir músicas recentes. A classificação vem dos dados do arquivo e pode não ser exata.</p>':'';
+  const off='<div style="margin-top:12px"><button class="sp-btn g sm" onclick="MU.auto()">Desligar reprodução automática</button></div>';
+  if(!L.length)return h+b+'<p class=sp-s>'+(AP&&(AP.g.size||(AP.pk&&AP.pk.size))?'Não há outras músicas desse estilo, de artistas diferentes, na biblioteca.':'Esta música não tem gênero confiável (tag ausente) nem playlist em comum, então não há de onde escolher. Defina o gênero abaixo.')+'</p>'+genBox()+off;
+  return h+b+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||UNK)}</p></div></div>`).join('')+genBox()+off;
+}
+function setGenreUi(){
+  const t=cur>=0&&T[cur];if(!t)return;
+  const k=key(t);
+  nph(0);
+  setTimeout(()=>fm('Gênero da música',[{k:'g',l:'Gênero (ex.: Trap, Funk). Vazio = usar a tag do arquivo.',v:GU[k]||''}],o=>{
+    const v=String(o.g||'').trim();if(v)GU[k]=v;else delete GU[k];
+    try{localStorage.setItem('hub_mgenre',JSON.stringify(GU))}catch(e){}
+    if(ctx==='auto'&&AP&&AP.sk==k)apSeed(cur);
+    apRefresh();draw();
+  }),150);
+}
+const solo=i=>{if(!T[i])return null;if(AUTO){apSeed(i);return'auto'}return'one:'+key(T[i])};
 const trk=m=>(m.tag&&m.tag.trk)||9999;
 function ctxL(c){
   if(typeof c!='string')return null;
@@ -229,7 +320,7 @@ function ctxL(c){
   return L.sort((a,b)=>{const x=meta(T[a]),y=meta(T[b]);
     return (al?0:String(x.album).localeCompare(String(y.album)))||(trk(x)-trk(y))||nn_(a).localeCompare(nn_(b))});
 }
-const qOf=c=>{const x=ctxL(c);if(x)return x;const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
+const qOf=c=>{if(c==='auto')return cur>=0&&T[cur]?[cur].concat(APQ):[];const x=ctxL(c);if(x)return x;const p=c&&pget(c);return p?p.keys.map(tIdx).filter(i=>i>=0):T.map((_,i)=>i)};
 
 /* ---- conexões (vêm do SY, do index.js) ---- */
 const syOk=()=>typeof SY!='undefined'&&SY._conns&&SY._c;
@@ -513,6 +604,7 @@ async function readTags(blob){ /* só ID3v2.3/2.4 (MP3) */
     else if(id=='TPE2')o.albumArtist=txt(f.subarray(1),e).join(';');
     else if(id=='TALB')o.album=txt(f.subarray(1),e)[0]||'';
     else if(id=='TRCK')o.trk=parseInt(txt(f.subarray(1),e)[0],10)||0;
+    else if(id=='TCON')o.genre=txt(f.subarray(1),e).join(';');
     else if(id=='TIPL'||id=='IPLS'){ /* pares função/pessoa: só produtor, DJ e mixagem */
       const L=txt(f.subarray(1),e);
       for(let i=0;i+1<L.length;i+=2)if(/produc|dj|mix/i.test(L[i]))o.prod.push(...splitNames(L[i+1]));
@@ -573,7 +665,7 @@ function meta(t){
     }
     if(m.pal===undefined)m.pal=null;
     if(!m.rd){m.rd=1;flushPend(m)}
-    if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg();lyLoad()}
+    if(ctx==='auto')apRefresh();if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg();lyLoad()}
     if(ch)covDraw();
   }).catch(()=>{if(m.pal===undefined)m.pal=null;if(!m.rd){m.rd=1;flushPend(m)}});
   return m;
@@ -850,7 +942,7 @@ function play(i,auto=1,c,back,pos){
   if(c!==undefined){if(c!==ctx)seen.clear();ctx=c;AX=0}
   if(!back&&cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
   seen.add(key(T[i]));
-  cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});
+  cur=i;dropPre();els.forEach(a=>{if(a!==el)killEl(a)});noteStart(i);
   msMeta(i);
   setSrc(el,T[i].blob);
   if(pos){const f=()=>{try{el.currentTime=pos}catch(e){}el._pl=null};el._pl=f;el.addEventListener('loadedmetadata',f,{once:true})}
@@ -859,7 +951,7 @@ function play(i,auto=1,c,back,pos){
 }
 const nextI=d=>{
   const q=qOf(ctx);if(!q.length)return -1;
-  if(shuf&&q.length>1){
+  if(shuf&&q.length>1&&ctx!=='auto'){
     let c=q.filter(i=>i!=cur&&!seen.has(key(T[i])));
     if(!c.length){seen.clear();if(cur>=0&&T[cur])seen.add(key(T[cur]));c=q.filter(i=>i!=cur)}
     return c[Math.floor(Math.random()*c.length)];
@@ -867,7 +959,7 @@ const nextI=d=>{
   const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length];
 };
 const next=()=>{const q=qOf(ctx);if(q.length<2&&!rep){if(cur>=0){pauseNow();seekTo(0)}return}const n=nextI(1);if(n>=0)play(n)};
-const prev=()=>{if(curPos()>3)seekTo(0);else if(shuf&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else{const n=nextI(-1);if(n>=0)play(n)}};
+const prev=()=>{if(curPos()>3)seekTo(0);else if((shuf||ctx==='auto')&&hist.length){const h=hist.pop();if(h<T.length)play(h,1,undefined,1)}else if(ctx==='auto')seekTo(0);else{const n=nextI(-1);if(n>=0)play(n)}};
 function toggle(){if(cur<0){if(T.length)play(0,1,null);return}playing()?pauseNow():resumeNow()}
 
 /* ---- troca de música sem pausa ---- */
@@ -889,7 +981,7 @@ function handoff(){
   stCur=i;stAcc=0;stCnt=0;stPos=-1;
   if(cur>=0&&cur!=i){hist.push(cur);if(hist.length>100)hist.shift()}
   seen.add(key(T[i]));
-  cur=i;el=a;
+  cur=i;el=a;noteStart(i);
   msMeta(i);playEl();draw();
   return true;
 }
@@ -961,7 +1053,7 @@ async function del(i){
   if(i==cur&&!el.paused)stTick(1);
   dropPre();if(i==cur){killEl(el);cur=-1}
   else if(i<cur)cur--;
-  const dk=key(T[i]);T.splice(i,1);KM=null;hist=[];if(!T.some(x=>key(x)==dk))recDrop(dk);draw();bls();
+  const dk=key(T[i]);T.splice(i,1);KM=null;hist=[];APQ=[];if(ctx==='auto')apRefresh();if(!T.some(x=>key(x)==dk))recDrop(dk);draw();bls();
 }
 
 /* ---- foto da playlist (reduzida para 256x256 para ficar leve) ---- */
@@ -1151,7 +1243,7 @@ async function rmExact(){
   if(!confirm('Remover '+L.length+' cópia(s) idêntica(s) (mesmo nome e tamanho)? Fica uma de cada.'))return;
   const gone=new Set(),ct=cur>=0?T[cur]:null;
   for(const i of L){try{await tx('readwrite',s=>s.delete(T[i].id));gone.add(i)}catch(e){}}
-  T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];dropPre();
+  T=T.filter((_,i)=>!gone.has(i));KM=null;hist=[];APQ=[];if(ctx==='auto')apRefresh();dropPre();
   if(ct){const k=key(ct);cur=T.indexOf(ct);if(cur<0)cur=T.findIndex(x=>key(x)==k)}
   draw();bls();
 }
@@ -1399,7 +1491,8 @@ const NPCSS=`#mu-np{position:fixed;inset:0;z-index:9000;visibility:hidden;pointe
 function npQueue(){
   const p=ctx&&pget(ctx);
   let h='<div class=np-h>A seguir</div>';
-  if(typeof ctx=='string'&&ctx.startsWith('one:'))return h+'<p class=sp-s>Você escolheu uma música avulsa. Nada toca depois dela, a menos que você ligue “Continuar com a biblioteca”.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="MU.auto()">Continuar com a biblioteca</button>';
+  if(ctx==='auto')return apQueueHtml(h);
+  if(typeof ctx=='string'&&ctx.startsWith('one:'))return h+'<p class=sp-s>Reprodução automática desligada: nada toca depois desta música.</p><button class="sp-btn g sm" style="margin-top:10px" onclick="MU.auto()">Ligar reprodução automática</button>'+genBox()+'';
   if(shuf)return h+'<p class=sp-s>Modo aleatório ligado: a próxima música é sorteada.</p>';
   const q=qOf(ctx),i=q.indexOf(cur),L=i<0?[]:q.slice(i+1,i+16);
   if(!L.length)return h+'<p class=sp-s>'+(rep&&q.length>1?'Depois desta, a lista volta ao início.':'Esta é a última música da lista.')+'</p>';
@@ -1796,7 +1889,7 @@ function lcard(){
   const n=dups().length;
   return`<div class=sp-h style="margin-top:0">Suas músicas<label class="sp-btn sm" style="cursor:pointer">Adicionar<input type=file accept="audio/*" multiple hidden onchange="MU.add(this.files);this.value=''"></label></div>
 <p class=sp-s style="margin-bottom:10px">${fail?'O armazenamento deste navegador não está disponível.':T.length+(T.length==1?' música':' músicas')+' · salvas só neste aparelho'}</p>
-${T.length?`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn sm" onclick="MU.pall()">Tocar biblioteca</button><button class="sp-btn g sm" role=switch aria-checked="${AUTO?'true':'false'}" onclick="MU.auto()">Continuar com a biblioteca: ${AUTO?'ligado':'desligado'}</button></div>`:''}
+${T.length?`<div class=sp-row style="margin-bottom:12px"><button class="sp-btn sm" onclick="MU.pall()">Tocar biblioteca</button><button class="sp-btn g sm" role=switch aria-checked="${AUTO?'true':'false'}" onclick="MU.auto()">Reprodução automática (mesmo gênero): ${AUTO?'ligada':'desligada'}</button></div>`:''}
 ${T.length>1?`<button class="sp-btn g sm" style="margin-bottom:12px" onclick="MU.dp()">Ver músicas repetidas${n?' ('+n+')':''}</button>`:''}
 ${DUP?dcard():''}
 ${T.length?sbox('mu-q',QL,'MU.q'):''}<div id=mu-res>${resLib()}</div>`;
@@ -1905,8 +1998,8 @@ function ptog(c){
 function setAuto(v){
   AUTO=v?1:0;try{localStorage.setItem('hub_mauto',AUTO?'1':'0')}catch(e){}
   if(cur>=0&&T[cur]){
-    if(AUTO&&typeof ctx=='string'&&ctx.startsWith('one:')){ctx=null;seen.clear();AX=1}
-    else if(!AUTO&&AX&&ctx===null){ctx='one:'+key(T[cur]);AX=0}
+    if(AUTO&&typeof ctx=='string'&&ctx.startsWith('one:')){apSeed(cur);ctx='auto';seen.clear();AX=1;apFill()}
+    else if(!AUTO&&ctx==='auto'){ctx='one:'+key(T[cur]);APQ=[];AX=0}
   }
   dropPre();draw();sched();
 }
@@ -1914,6 +2007,7 @@ function cinfo(){
   if(typeof ctx=='string'){
     if(ctx.startsWith('al:')){const t=T[qOf(ctx)[0]];return{k:'Tocando do álbum',n:t?meta(t).album:'Álbum'}}
     if(ctx.startsWith('ar:')){const k=ctx.slice(3);let n='Artista';qOf(ctx).some(i=>crd(meta(T[i])).some(x=>ak(x)==k&&(n=x)));return{k:'Tocando do artista',n}}
+    if(ctx==='auto')return{k:'Reprodução automática',n:AP&&AP.label?AP.label:'Mesmo gênero'};
     if(ctx.startsWith('one:'))return{k:'Tocando agora',n:'Música selecionada'};
   }
   const p=ctx&&pget(ctx);return{k:p?'Tocando da playlist':'Tocando agora',n:p?p.name:'Suas músicas'};
@@ -1935,7 +2029,7 @@ dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;LD=1;migStat
 return{
   add,pl:playSolo,rm:del,nx:next,pv:prev,
   sp(i){const t=T[i];if(!t)return;recAdd(key(t));playSolo(i)},
-  ps:playSolo,hs(i){if(!RC&&cur==i&&cur>=0){toggle();return}playSolo(i)},hp(n){ptog(HMC[n])},auto(){setAuto(!AUTO)},pall:()=>playPL(null),
+  ps:playSolo,hs(i){if(!RC&&cur==i&&cur>=0){toggle();return}playSolo(i)},hp(n){ptog(HMC[n])},auto(){setAuto(!AUTO)},sg(){setGenreUi()},pall:()=>playPL(null),
   tab(k){STV=0;MENU=0;RC=null;TAB=k;draw()},
   menu(v){MENU=v?1:0;draw();window.scrollTo(0,0)},
   goto(p){MENU=0;STV=0;go(p)},
