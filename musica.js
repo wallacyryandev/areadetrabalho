@@ -126,6 +126,13 @@ try{PL=JSON.parse(localStorage.getItem('hub_playlists'))||[]}catch(e){PL=[]}
 const savePL=()=>{try{localStorage.setItem('hub_playlists',JSON.stringify(PL))}catch(e){}};
 PL.forEach(p=>{if(!p.u)p.u=Date.now()});savePL();
 const pls=()=>PL.filter(p=>!p.del);
+/* ---- pesquisas recentes (só neste aparelho; guardam a chave da música) ---- */
+const SRL=50;let SR=[];
+try{const a=JSON.parse(localStorage.getItem('hub_msearch'));if(Array.isArray(a))SR=a.filter(k=>typeof k=='string').slice(0,SRL)}catch(e){SR=[]}
+const saveSR=()=>{try{localStorage.setItem('hub_msearch',JSON.stringify(SR))}catch(e){}};
+const recAdd=k=>{SR=[k].concat(SR.filter(x=>x!=k)).slice(0,SRL);saveSR()};
+const recDrop=k=>{if(SR.includes(k)){SR=SR.filter(x=>x!=k);saveSR()}};
+const recList=()=>SR.map(tIdx).filter(i=>i>=0);
 const pget=id=>PL.find(p=>p.id==id&&!p.del);
 const touch=p=>{p.u=Date.now();savePL();bpl(p)};
 const mt=(s,q)=>{const n=x=>String(x).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();const t=n(s).replace(/[-–_]+/g,' ');return n(q).split(/\s+/).filter(Boolean).every(w=>t.includes(w))};
@@ -584,7 +591,7 @@ async function del(i){
   try{await tx('readwrite',s=>s.delete(T[i].id))}catch(e){return}
   dropPre();if(i==cur){killEl(el);cur=-1}
   else if(i<cur)cur--;
-  T.splice(i,1);KM=null;hist=[];draw();bls();
+  const dk=key(T[i]);T.splice(i,1);KM=null;hist=[];if(!T.some(x=>key(x)==dk))recDrop(dk);draw();bls();
 }
 
 /* ---- foto da playlist (reduzida para 256x256 para ficar leve) ---- */
@@ -1239,9 +1246,16 @@ function home(){
 /* Músicas (biblioteca) */
 function resLib(){
   if(!T.length)return'<p class=sp-s style="padding:8px">Nenhuma música ainda. Use “Adicionar” e escolha os arquivos do aparelho.</p>';
-  const q=QL.trim(),pl=playing(),r=T.map((t,i)=>({t,i})).filter(x=>!q||matches(x.t.name,q));
+  const q=QL.trim();
+  const row=i=>`<div class="sp-r${i==cur?' on':''}"><div class=sp-cv style="${artSt(T[i])}" onclick="MU.sp(${i})">${artIc(T[i])}</div><div class=sp-i onclick="MU.sp(${i})"><div class=sp-n>${esc(nm(T[i].name))}</div><p class=sp-s>${mb(T[i].size)}</p></div><button class=sp-ib onclick="MU.pt(${i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${i})" title="Remover" aria-label="Remover">${I.x}</button></div>`;
+  if(!q){
+    const L=recList();
+    if(!L.length)return'<p class=sp-s style="padding:8px">Suas pesquisas recentes aparecerão aqui</p>';
+    return'<p class=sp-s style="padding:4px 8px 6px"><b style="color:#fff">Pesquisas recentes</b></p>'+L.map(row).join('');
+  }
+  const r=T.map((t,i)=>({t,i})).filter(x=>matches(x.t.name,q));
   if(!r.length)return none(q);
-  return r.slice(0,LIM).map(x=>`<div class="sp-r${x.i==cur?' on':''}"><div class=sp-cv style="${artSt(x.t)}" onclick="MU.pl(${x.i})">${artIc(x.t)}</div><div class=sp-i onclick="MU.pl(${x.i})"><div class=sp-n>${esc(nm(x.t.name))}</div><p class=sp-s>${mb(x.t.size)}</p></div><button class=sp-ib onclick="MU.pt(${x.i})" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button><button class=sp-ib onclick="MU.rm(${x.i})" title="Remover" aria-label="Remover">${I.x}</button></div>`).join('')+more(r.length);
+  return r.slice(0,LIM).map(x=>row(x.i)).join('')+more(r.length);
 }
 function lcard(){
   const n=dups().length;
@@ -1356,6 +1370,7 @@ dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;migStats();d
 
 return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
+  sp(i){const t=T[i];if(!t)return;recAdd(key(t));play(i,1,null)},
   tab(k){TAB=k;draw()},
   menu(v){MENU=v?1:0;draw();window.scrollTo(0,0)},
   goto(p){MENU=0;go(p)},
