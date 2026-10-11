@@ -243,7 +243,7 @@ function stTick(){
   const t=T[cur],name=nm(t.name),dk=stDay();
   STT.tot+=dt;SESS+=dt;STT.d[dk]=(STT.d[dk]||0)+dt;
   const r=STT.tr[name]||(STT.tr[name]={s:0,p:0});r.s+=dt;
-  const a=artOf(t.name);if(a)STT.ar[a]=(STT.ar[a]||0)+dt;
+  const a=meta(t).artist||artOf(t.name);if(a)STT.ar[a]=(STT.ar[a]||0)+dt;
   const pl=ctx!=null?pget(ctx):null;if(pl)STT.pl[pl.id]=(STT.pl[pl.id]||0)+dt;
   stAcc+=dt;if(!stCnt&&stAcc>=Math.min(30,(curDur()||60)/2)){stCnt=1;r.p++}
   stDirty=1;
@@ -253,17 +253,49 @@ addEventListener('pagehide',saveST);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)saveST()});
 const fT=s=>{s=Math.round(s);return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h '+String(Math.floor(s%3600/60)).padStart(2,'0')+' min'};
 const topOf=(o,f)=>Object.entries(o).filter(e=>f?f(e):1).sort((a,b)=>(b[1].p-a[1].p)||((b[1].s!=null?b[1].s:b[1])-(a[1].s!=null?a[1].s:a[1])))[0];
+/* ---- página "Sua escuta" (redesenhada; usa os mesmos dados de STT, sem alterar os cálculos) ---- */
+const tByName=n=>T.find(t=>nm(t.name)==n);
+const tint=t=>{const c=t&&meta(t).pal;return c?{h:Math.round(c.h),s:Math.round(Math.min(c.s,.55)*100)}:null};
+const tintBg=(c,a)=>c?'linear-gradient('+(a||'180deg')+',hsl('+c.h+','+c.s+'%,24%) 0%,#181818 100%)':'linear-gradient('+(a||'180deg')+',#2a2a2a 0%,#181818 100%)';
+const fTb=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?'<b>'+h+'</b><small>h</small><b>'+m+'</b><small>min</small>':m?'<b>'+m+'</b><small>min</small>':'<b>'+s+'</b><small>s</small>'};
+const dkey=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 function statsCard(){
-  if(STT.tot<5)return`<div class=st-h>Sua escuta</div><div class=st-c><div class=st-s>Ouça algumas músicas para ver aqui o seu tempo de escuta, a música, a playlist e o cantor mais ouvidos.</div></div>`;
-  const now=new Date();let w=0;for(let i=0;i<7;i++){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);w+=STT.d[d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')]||0}
-  const tt=topOf(STT.tr,e=>e[1].s>=5),ta=Object.entries(STT.ar).sort((a,b)=>b[1]-a[1])[0],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
-  const card=(l,v,s)=>`<div class=st-c><div class=st-l>${l}</div><div class=st-v>${esc(v)}</div><div class=st-s>${s}</div></div>`;
-  return`<div class=st-h>Sua escuta</div>
-<div class="st-c st-t"><div class=st-l>Tempo ouvindo música</div><div class=st-big>${fT(STT.tot)}</div><div class=st-s>no total, neste aparelho</div></div>
-<div class=st-m><div><div class=st-l>Hoje</div><b>${fT(STT.d[stDay()]||0)}</b></div><div><div class=st-l>Últimos 7 dias</div><b>${fT(w)}</b></div></div>
-${tt?card('Música mais escutada',tt[0],(tt[1].p?tt[1].p+(tt[1].p==1?' reprodução':' reproduções')+' · ':'')+fT(tt[1].s)):''}
-${tp?card('Playlist mais escutada',pget(tp[0]).name,fT(tp[1])+' ouvidos'):''}
-${ta?card('Cantor mais escutado',ta[0],fT(ta[1])+' ouvidos'):`<div class=st-c><div class=st-l>Cantor mais escutado</div><div class=st-s style="margin-top:6px">Para mostrar o cantor, nomeie os arquivos como "Cantor - Música" (use <b>Renomear</b> na biblioteca).</div></div>`}`;
+  const since=Object.keys(STT.d).sort()[0],sdt=since?new Date(since+'T12:00:00'):null;
+  const per=sdt&&!isNaN(sdt)?'Desde '+sdt.toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})+' · neste aparelho':'Neste aparelho';
+  if(STT.tot<5)return`<div class=st-wrap id=st-hero><div class=st-hero style="background:${tintBg(null)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p><p class=st-emp>Ouça algumas músicas para ver aqui o seu tempo de escuta, a música, a playlist e o artista mais ouvidos.</p></div></div>`;
+  const now=new Date(),wk=[];
+  for(let i=6;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);wk.push({l:d.toLocaleDateString('pt-BR',{weekday:'narrow'}).toUpperCase(),v:STT.d[dkey(d)]||0})}
+  const w=wk.reduce((a,x)=>a+x.v,0),mx=Math.max(...wk.map(x=>x.v),1),td=STT.d[stDay()]||0;
+  const tr=Object.entries(STT.tr).filter(e=>e[1].s>=5).sort((a,b)=>(b[1].p-a[1].p)||(b[1].s-a[1].s)),tt=tr[0];
+  const ta=Object.entries(STT.ar).sort((a,b)=>b[1]-a[1])[0],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
+  const tk=tt&&tByName(tt[0]),tc=tint(tk);
+  const secs=[['st-hero','Resumo']];if(tt)secs.push(['st-mus','Música']);if(tp)secs.push(['st-pl','Playlist']);if(ta)secs.push(['st-ar','Artista']);if(tr.length>1)secs.push(['st-top','Mais ouvidas']);
+  let h=`<div class=st-wrap><div class=st-hero id=st-hero style="background:${tintBg(tc)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p>
+<div class=st-tot><div class=st-big>${fTb(STT.tot)}</div><div class=st-lbl>ouvindo música no total</div></div>
+<div class=st-mm><div><div class=st-l>Hoje</div><div class=st-v>${fTb(td)}</div></div><div><div class=st-l>Últimos 7 dias</div><div class=st-v>${fTb(w)}</div></div></div>
+<div class=st-wk role=img aria-label="Tempo ouvido nos últimos 7 dias">${wk.map((x,i)=>`<div class="${i==6?'on':''}"><i style="height:${Math.max(3,Math.round(x.v/mx*56))}px"></i><span>${x.l}</span></div>`).join('')}</div></div>
+<div class=st-nav>${secs.map(x=>`<button class=sp-chip onclick="MU.stgo('${x[0]}')">${x[1]}</button>`).join('')}</div>`;
+  if(tt){
+    const t=tk,m=t?meta(t):null,title=m?m.title:tt[0].replace(/^.*?\s+[-–—]\s+/,''),art=m?m.artist:artOf(tt[0]);
+    h+=`<section class="st-sec" id=st-mus><div class=st-eye>Música mais escutada</div><div class="st-feat st-lg" style="background:${tintBg(tc,'135deg')}"><div class=st-art style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-tx><div class=st-nm>${esc(title)}</div>${art?`<div class=st-sub>${esc(art)}</div>`:''}<div class=st-meta><span><b>${fT(tt[1].s)}</b> ouvidos</span>${tt[1].p?`<span><b>${tt[1].p}</b> ${tt[1].p==1?'reprodução':'reproduções'}</span>`:''}</div></div></div></section>`;
+  }
+  let two='';
+  if(tp){
+    const pl=pget(tp[0]),n=pl.keys.filter(k=>tIdx(k)>=0).length,f=tByName&&pl.keys.map(tIdx).filter(x=>x>=0)[0],pc=f!=null?tint(T[f]):null;
+    two+=`<section class=st-sec id=st-pl><div class=st-eye>Playlist mais escutada</div><div class=st-feat style="background:${tintBg(pc,'135deg')}">${plcv(pl,'width:var(--ca);height:var(--ca);font-size:34px;cursor:default;border-radius:8px')}<div class=st-tx><div class=st-nm>${esc(pl.name)}</div><div class=st-sub>${n} ${n==1?'música':'músicas'}</div><div class=st-meta><span><b>${fT(tp[1])}</b> ouvidos</span></div></div></div></section>`;
+  }
+  if(ta){
+    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${esc(ta[0].trim().charAt(0).toUpperCase()||'?')}</div><div class=st-tx><div class=st-nm>${esc(ta[0])}</div><div class=st-meta><span><b>${fT(ta[1])}</b> ouvidos</span></div></div></div></section>`;
+  }else{
+    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${I.note}</div><div class=st-tx><div class=st-sub>Para mostrar o artista, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música" (use <b>Renomear</b> na biblioteca).</div></div></div></section>`;
+  }
+  if(two)h+=`<div class=st-two>${two}</div>`;
+  if(tr.length>1){
+    h+=`<section class=st-sec id=st-top><div class=st-eye>Mais ouvidas</div><div class=st-list>${tr.slice(0,5).map((e,i)=>{
+      const t=tByName(e[0]),m=t?meta(t):null,title=m?m.title:e[0].replace(/^.*?\s+[-–—]\s+/,''),art=m?m.artist:artOf(e[0]);
+      return`<div class=st-row><span class=st-n>${i+1}</span><div class=st-cv style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-i><div class=st-rt>${esc(title)}</div>${art?`<div class=st-ra>${esc(art)}</div>`:''}</div><span class=st-rs>${fT(e[1].s)}</span></div>`}).join('')}</div></section>`;
+  }
+  return h+'</div>';
 }
 
 /* ---- reprodução local ---- */
@@ -987,17 +1019,51 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-dvb.on{color:#1db954}
 .sp-dvb svg{font-size:20px}
 .sp-dvb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.st-h{margin:18px 8px 10px;font-size:18px;font-weight:800}
-.st-c{background:#1a1a1a;border-radius:12px;padding:14px 16px;margin:0 0 10px}
-.st-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#b3b3b3}
-.st-v{font-size:20px;font-weight:800;margin:6px 0 2px;overflow-wrap:anywhere}
-.st-s{font-size:13px;color:#b3b3b3}
-.st-t{background:#1db954;color:#000}
-.st-t .st-l,.st-t .st-s{color:rgba(0,0,0,.7)}
-.st-big{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:4px 0 2px}
-.st-m{display:flex;gap:10px;margin:0 0 10px}
-.st-m>div{flex:1;min-width:0;background:#1a1a1a;border-radius:12px;padding:12px 14px}
-.st-m b{display:block;font-size:17px;font-weight:800;margin-top:4px}
+.st-wrap{display:flex;flex-direction:column;gap:18px;margin:4px 0 8px}
+.st-hero{border-radius:16px;padding:22px 18px 16px}
+.st-ttl{font-size:clamp(32px,8vw,48px);font-weight:900;letter-spacing:-.03em;line-height:1.05;margin:0}
+.st-per{color:#ffffffb3;font-size:13px;margin:6px 0 0}
+.st-emp{color:#ffffffb3;font-size:14px;line-height:1.5;margin:18px 0 6px}
+.st-tot{margin-top:22px}
+.st-big{font-size:clamp(46px,12vw,76px);line-height:1;letter-spacing:-.04em}
+.st-big b,.st-v b{font-weight:900}
+.st-big small{font-size:.32em;font-weight:700;color:#ffffffb3;margin:0 8px 0 4px;letter-spacing:0}
+.st-v small{font-size:.6em;font-weight:700;color:#ffffffb3;margin:0 6px 0 3px}
+.st-lbl{font-size:13px;font-weight:600;color:#ffffffb3;margin-top:6px}
+.st-mm{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
+.st-mm>div{background:#0000004d;border-radius:12px;padding:12px 14px}
+.st-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#ffffffb3}
+.st-v{font-size:22px;font-weight:800;margin-top:4px}
+.st-wk{display:flex;align-items:flex-end;gap:8px;height:84px;margin-top:18px}
+.st-wk>div{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;height:100%}
+.st-wk i{display:block;width:100%;max-width:30px;border-radius:4px 4px 2px 2px;background:#ffffff40}
+.st-wk .on i{background:#1db954}
+.st-wk span{font-size:11px;font-weight:700;color:#ffffff99}
+.st-nav{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.st-sec{display:flex;flex-direction:column;gap:10px;scroll-margin-top:12px;min-width:0}
+.st-eye{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#b3b3b3;margin:0 2px}
+.st-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:18px}
+.st-feat{--ca:112px;display:flex;align-items:center;gap:16px;border-radius:16px;padding:16px;min-width:0}
+.st-lg{--ca:132px}
+.st-art,.st-av{width:var(--ca);height:var(--ca);flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;box-shadow:0 6px 18px #0006}
+.st-av{border-radius:50%;background:#2a2a2a;color:#ffffffaa;font-weight:800;font-size:calc(var(--ca)*.4);box-shadow:none}
+.st-av svg{width:.8em;height:.8em}
+.st-tx{flex:1;min-width:0}
+.st-nm{font-size:clamp(19px,4.6vw,26px);font-weight:900;letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
+.st-sub{color:#b3b3b3;font-size:14px;margin-top:4px;line-height:1.4}
+.st-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:12px;font-size:13px;color:#b3b3b3}
+.st-meta b{color:#fff}
+.st-list{display:flex;flex-direction:column;gap:2px}
+.st-row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px}
+.st-row:hover{background:#ffffff14}
+.st-n{width:18px;text-align:center;color:#b3b3b3;font-weight:700;font-size:15px;flex:none}
+.st-cv{width:44px;height:44px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px}
+.st-i{flex:1;min-width:0}
+.st-rt{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-ra{font-size:13px;color:#b3b3b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-rs{font-size:13px;color:#b3b3b3;flex:none}
+@media(min-width:720px){.st-lg{--ca:168px}.st-feat{--ca:132px}.st-hero{padding:30px 28px 22px}.st-mm{max-width:460px}.st-wk{max-width:460px}}
+@media(max-width:380px){.st-feat{--ca:92px;gap:12px}.st-lg{--ca:104px}}
 </style>`;
 
 /* ---- telas ---- */
@@ -1174,6 +1240,7 @@ return{
   back(){take(RC)},
   sy:syncDev,
   dsh,dsel,nph,npa,
-  qp(i){play(i,1,ctx)}
+  qp(i){play(i,1,ctx)},
+  stgo(id){const e=document.getElementById(id);if(e)e.scrollIntoView({behavior:'smooth',block:'start'})}
 };
 })();
