@@ -17,7 +17,7 @@ const MU=(()=>{
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
 let T=[],cur=-1,shuf=0,rep=1,seeking=0,fail=0,blocked=0,seen=new Set(),hist=[],DUP=0;
-let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0;
+let RC=null,R={},XF='',lastX=0,lastB=0,bt=0,TID=0,cs='',myPlayAt=0,TAB='home',MENU=0,STV=0;
 /* estado do painel de aparelhos */
 let DSO=0,dsF=null,XS={},XE={};
 /* estado da tela "Tocando agora" */
@@ -54,6 +54,7 @@ const I={
   /* ícone "Conectar a um aparelho" (tela + alto-falante), desenhado em traço */
   devs:'<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6"/><rect x="13" y="12" width="8" height="9" rx="1.6"/><circle cx="17" cy="17.2" r="1.7"/><path d="M8 20h4"/></svg>'
 };
+I.info=sv_('M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z');
 
 /* ---- armazenamento local (IndexedDB) ---- */
 const dbp=new Promise((res,rej)=>{try{const r=indexedDB.open('hub-musicas',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}});
@@ -124,7 +125,7 @@ const plSt=p=>p.img?'background:#222 url('+p.img+') center/cover no-repeat':cov(
 /* ---- barra de navegação: some na página Música (a engrenagem abre a tela de menu) ---- */
 const _render=render;
 window.render=function(){
-  if(page!='mus'){MENU=0;if(DSO)dsh(0);if(NPO)nph(0)}
+  if(page!='mus'){MENU=0;STV=0;if(DSO)dsh(0);if(NPO)nph(0)}
   document.body.classList.toggle('mu-full',page=='mus');
   _render();
 };
@@ -340,10 +341,10 @@ function stBuild(){
   return stNorm(o);
 }
 const stGet=()=>{if(stB){STT=stBuild();stB=0}return STT};
-/* atualiza o que está na tela e depende do tempo de escuta (texto da sessão e página "Sua escuta"/perfil) */
+/* atualiza o que está na tela e depende do tempo de escuta (texto da sessão e telas de estatísticas) */
 function stUi(){
   const tt=$('#mu-tt');if(tt)tt.textContent=tline();
-  if(MENU&&typeof page!='undefined'&&page=='mus'){
+  if((MENU||STV)&&typeof page!='undefined'&&page=='mus'){
     const e=$('#mu-stats');
     if(e){const h=statsCard();if(h!==stLast){stLast=h;e.innerHTML=h}}
   }
@@ -544,53 +545,79 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)cflush()});
 addEventListener('storage',e=>{if(e.key==CK){const r=clRead();if(r&&clMerge(CL,r)){stB=1;stUi()}}});
 const fT=s=>{s=Math.round(s);return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h '+String(Math.floor(s%3600/60)).padStart(2,'0')+' min'};
 const topOf=(o,f)=>Object.entries(o).filter(e=>f?f(e):1).sort((a,b)=>(b[1].p-a[1].p)||((b[1].s!=null?b[1].s:b[1])-(a[1].s!=null?a[1].s:a[1])))[0];
-/* ---- página "Sua escuta" (redesenhada; usa os mesmos dados de STT, sem alterar os cálculos) ---- */
+/* ---- "Sua escuta" no estilo Spotify: tela "Sua Máquina do Tempo" e tela "Artistas mais tocados".
+   Usa os mesmos dados de stGet() (células + legado, sincronizados entre aparelhos); nada é inventado.
+   O mês é o mês atual. Totais do mês: STT.d (inclui legado). Artistas do mês: STT.ad (últimos 120 dias).
+   Música do mês: só as células (o legado não tem data por música). Foto do artista = capa da faixa que ele mais tocou no mês. ---- */
 const tByName=n=>T.find(t=>nm(t.name)==n);
 const tint=t=>{const c=t&&meta(t).pal;return c?{h:Math.round(c.h),s:Math.round(Math.min(c.s,.55)*100)}:null};
 const tintBg=(c,a)=>c?'linear-gradient('+(a||'180deg')+',hsl('+c.h+','+c.s+'%,24%) 0%,#181818 100%)':'linear-gradient('+(a||'180deg')+',#2a2a2a 0%,#181818 100%)';
 const fTb=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?'<b>'+h+'</b><small>h</small><b>'+m+'</b><small>min</small>':m?'<b>'+m+'</b><small>min</small>':'<b>'+s+'</b><small>s</small>'};
 const dkey=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const MESES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const KB="if(event.key=='Enter'||event.key==' '){event.preventDefault();this.click()}";
+/* duração em linguagem natural: "3 horas e 14 minutos" */
+const fN=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);
+  if(h)return h+(h==1?' hora':' horas')+(m?' e '+m+(m==1?' minuto':' minutos'):'');
+  if(m)return m+(m==1?' minuto':' minutos');
+  return s+(s==1?' segundo':' segundos')};
+/* estatísticas do mês atual, derivadas das mesmas células/legado de stGet() */
+function monthStats(){
+  const S=stGet(),mk=dkey(new Date()).slice(0,7),first=Object.keys(S.d).sort()[0];
+  const prev=!!(first&&first.slice(0,7)<mk);
+  let tot=0;Object.keys(S.d).forEach(d=>{if(d.slice(0,7)==mk)tot+=S.d[d]});
+  const tr={},at={};
+  Object.values(CL.c).forEach(c=>{
+    if(c.d.slice(0,7)!=mk||!(c.s>0||c.p))return;
+    const t=tr[c.n]||(tr[c.n]={s:0,p:0});t.s+=c.s||0;t.p+=c.p||0;
+    (c.ar||[]).forEach(n=>{const k=ak(n),o=at[k]||(at[k]={});o[c.n]=(o[c.n]||0)+(c.s||0)});
+  });
+  const ar={};
+  Object.keys(S.ad).forEach(d=>{if(d.slice(0,7)!=mk)return;Object.keys(S.ad[d]).forEach(k=>{ar[k]=(ar[k]||0)+S.ad[d][k]})});
+  const tracks=Object.entries(tr).filter(e=>e[1].s>=5).sort((a,b)=>(b[1].p-a[1].p)||(b[1].s-a[1].s));
+  tracks.forEach(e=>{const o=S.tr[e[0]];e[1].nv=!!(prev&&o&&o.s<=e[1].s+1)});
+  const arts=Object.entries(ar).filter(e=>e[1]>=1).sort((a,b)=>b[1]-a[1]).map(e=>{
+    const k=e[0],a2=S.a2[k],o=at[k]||{},img=Object.keys(o).sort((x,y)=>o[y]-o[x])[0]||'';
+    return{k,n:a2?a2.n:k,s:e[1],img,nv:!!(prev&&a2&&a2.s<=e[1]+1)};
+  });
+  return{tot,tracks,arts};
+}
+const cvOf=t=>t&&meta(t).cover?t:null;
+const circ=(t,n,cls)=>{t=cvOf(t);return`<div class="st-ci ${cls||''}" style="${t?artSt(t):''}">${t?'':esc(String(n||'').trim().charAt(0).toUpperCase()||'?')}</div>`};
+const stBack=()=>`<div class=st-bk><button class=sp-ib onclick="MU.sback()" aria-label="Voltar">${I.back}</button></div>`;
 function statsCard(){
-  const STT=stGet();
-  const since=Object.keys(STT.d).sort()[0],sdt=since?new Date(since+'T12:00:00'):null;
-  const per=sdt&&!isNaN(sdt)?'Desde '+sdt.toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})+' · todos os aparelhos conectados':'Todos os aparelhos conectados';
-  if(STT.tot<5)return`<div class=st-wrap id=st-hero><div class=st-hero style="background:${tintBg(null)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p><p class=st-emp>Ouça algumas músicas para ver aqui o seu tempo de escuta, a música, a playlist e o artista mais ouvidos.</p></div></div>`;
-  const now=new Date(),wk=[];
-  for(let i=6;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);wk.push({l:d.toLocaleDateString('pt-BR',{weekday:'narrow'}).toUpperCase(),v:STT.d[dkey(d)]||0})}
-  const w=wk.reduce((a,x)=>a+x.v,0),mx=Math.max(...wk.map(x=>x.v),1),td=STT.d[stDay()]||0;
-  const tr=Object.entries(STT.tr).filter(e=>e[1].s>=5).sort((a,b)=>(b[1].p-a[1].p)||(b[1].s-a[1].s)),tt=tr[0];
-  const taE=Object.entries(STT.a2).filter(e=>e[1]&&e[1].s>=1).sort((a,b)=>b[1].s-a[1].s)[0],ta=taE&&[taE[1].n,taE[1].s],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
-  const tk=tt&&tByName(tt[0]),tc=tint(tk);
-  const secs=[['st-hero','Resumo']];if(tt)secs.push(['st-mus','Música']);if(tp)secs.push(['st-pl','Playlist']);if(ta)secs.push(['st-ar','Artista']);if(tr.length>1)secs.push(['st-top','Mais ouvidas']);
-  let h=`<div class=st-wrap><div class=st-hero id=st-hero style="background:${tintBg(tc)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p>
-<div class=st-tot><div class=st-big>${fTb(STT.tot)}</div><div class=st-lbl>ouvindo música no total</div></div>
-<div class=st-mm><div><div class=st-l>Hoje</div><div class=st-v>${fTb(td)}</div></div><div><div class=st-l>Últimos 7 dias</div><div class=st-v>${fTb(w)}</div></div></div>
-<div class=st-wk role=img aria-label="Tempo ouvido nos últimos 7 dias">${wk.map((x,i)=>`<div class="${i==6?'on':''}"><i style="height:${Math.max(3,Math.round(x.v/mx*56))}px"></i><span>${x.l}</span></div>`).join('')}</div></div>
-<div class=st-nav>${secs.map(x=>`<button class=sp-chip onclick="MU.stgo('${x[0]}')">${x[1]}</button>`).join('')}</div>`;
-  if(tt){
-    const t=tk,m=t?meta(t):null,title=m?m.title:parseName(tt[0]).title,art=m?m.artist:artOf(tt[0]);
-    h+=`<section class="st-sec" id=st-mus><div class=st-eye>Música mais escutada</div><div class="st-feat st-lg" style="background:${tintBg(tc,'135deg')}"><div class=st-art style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-tx><div class=st-nm>${esc(title)}</div>${art?`<div class=st-sub>${esc(art)}</div>`:''}<div class=st-meta><span><b>${fT(tt[1].s)}</b> ouvidos</span>${tt[1].p?`<span><b>${tt[1].p}</b> ${tt[1].p==1?'reprodução':'reproduções'}</span>`:''}</div></div></div></section>`;
+  const M=monthStats(),d=new Date(),mes=MESES[d.getMonth()],ano=d.getFullYear(),mn=Math.round(M.tot/60),
+        mins=mn+(mn==1?' minuto':' minutos');
+  if(!STV){ /* resumo dentro da tela de configurações */
+    return M.tot<5
+      ?`<div class=st-card><div class=st-lb>Sua escuta</div><p class=st-sm style="margin-top:8px">Ouça algumas músicas para ver aqui o seu tempo de escuta.</p></div>`
+      :`<div class="st-card st-pv" role=button tabindex=0 onclick="MU.sopen('main')" onkeydown="${KB}"><div><div class=st-lb>Sua escuta · ${mes}</div><div class=st-gr>${mins}</div></div>${I.chev}</div>`;
   }
-  let two='';
-  if(tp){
-    const pl=pget(tp[0]),n=pl.keys.filter(k=>tIdx(k)>=0).length,f=tByName&&pl.keys.map(tIdx).filter(x=>x>=0)[0],pc=f!=null?tint(T[f]):null;
-    two+=`<section class=st-sec id=st-pl><div class=st-eye>Playlist mais escutada</div><div class=st-feat style="background:${tintBg(pc,'135deg')}">${plcv(pl,'width:var(--ca);height:var(--ca);font-size:34px;cursor:default;border-radius:8px')}<div class=st-tx><div class=st-nm>${esc(pl.name)}</div><div class=st-sub>${n} ${n==1?'música':'músicas'}</div><div class=st-meta><span><b>${fT(tp[1])}</b> ouvidos</span></div></div></div></section>`;
+  const head=(STV=='art'
+    ?`<div class=st-ah><button class=sp-ib onclick="MU.sback()" aria-label="Voltar">${I.back}</button><div class=st-at>Artistas mais tocados</div><span></span></div><p class=st-sm style="margin:22px 0 0">${mes} ${ano}</p>`
+    :`${stBack()}<h2 class=st-h1>Sua Máquina do Tempo</h2><p class=st-mo><span style="color:#fff">${mes}</span> <span>${ano}</span><button class="sp-ib st-info" onclick="MU.sinfo()" aria-label="Como o tempo é calculado">${I.info}</button></p>`);
+  if(M.tot<5)return`<div class=st-pg>${head}<div class=st-card><p class=st-sm>Ouça algumas músicas este mês para ver aqui o seu tempo de escuta, o artista e a música mais ouvidos.</p></div></div>`;
+
+  /* ---- tela 2: Artistas mais tocados ---- */
+  if(STV=='art'){
+    const n=M.arts.length;
+    return`<div class=st-pg>${head}<h2 class=st-sum>${n?`Você ouviu <span class=st-blue>${n} ${n==1?'artista':'artistas'}</span> esse mês.`:'Ainda não há artistas identificados neste mês.'}</h2>
+${!n?`<div class=st-card><p class=st-sm>Para identificar artistas, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música".</p></div>`:''}
+<div class=st-ls>${M.arts.slice(0,50).map((a,i)=>`<div class=st-ar><div class=st-rk>${i+1}</div><div class=st-rb><div class=st-rt2>${a.nv?'<span class=st-badge>Novidade</span>':''}<div class=st-an>${esc(a.n)}</div><div class=st-as><b>${fN(a.s)}</b> de escuta</div></div>${circ(a.img&&tByName(a.img),a.n,'st-c3')}</div></div>`).join('')}</div>
+${n>50?`<p class=st-sm style="margin-top:10px">Mostrando 50 de ${n} artistas.</p>`:''}</div>`;
   }
-  if(ta){
-    /* hoje e últimos 7 dias deste artista (dados por dia guardados a partir desta versão) */
-    const ak0=taE[0],atd=(STT.ad[stDay()]||{})[ak0]||0;let aw=0;
-    for(let i=0;i<7;i++)aw+=(STT.ad[dkey(new Date(now.getFullYear(),now.getMonth(),now.getDate()-i))]||{})[ak0]||0;
-    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${esc(ta[0].trim().charAt(0).toUpperCase()||'?')}</div><div class=st-tx><div class=st-nm>${esc(ta[0])}</div><div class=st-meta><span><b>${fT(ta[1])}</b> ouvidos</span>${atd>=1?`<span>hoje <b>${fT(atd)}</b></span>`:''}${aw>=1?`<span>7 dias <b>${fT(aw)}</b></span>`:''}</div></div></div></section>`;
-  }else{
-    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${I.note}</div><div class=st-tx><div class=st-sub>Para mostrar o artista, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música" antes de adicioná-los.</div></div></div></section>`;
-  }
-  if(two)h+=`<div class=st-two>${two}</div>`;
-  if(tr.length>1){
-    h+=`<section class=st-sec id=st-top><div class=st-eye>Mais ouvidas</div><div class=st-list>${tr.slice(0,5).map((e,i)=>{
-      const t=tByName(e[0]),m=t?meta(t):null,title=m?m.title:parseName(e[0]).title,art=m?m.artist:artOf(e[0]);
-      return`<div class=st-row><span class=st-n>${i+1}</span><div class=st-cv style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-i><div class=st-rt>${esc(title)}</div>${art?`<div class=st-ra>${esc(art)}</div>`:''}</div><span class=st-rs>${fT(e[1].s)}</span></div>`}).join('')}</div></section>`;
-  }
-  return h+'</div>';
+
+  /* ---- tela 1: Sua Máquina do Tempo ---- */
+  const ta=M.arts[0],tt=M.tracks[0],tk=tt&&tByName(tt[0]),tm_=tk?meta(tk):null,
+        title=tt?(tm_?tm_.title:parseName(tt[0]).title):'',tart=tt?(tm_?tm_.artist:artOf(tt[0])):'';
+  const sq=t=>`<div class="st-ci st-sq" style="${t?artSt(t):'background:#2a2a2a'}">${t?artIc(t):I.note}</div>`;
+  return`<div class=st-pg>${head}
+<div class="st-card st-time"><div class=st-lb>Tempo ouvindo</div><div class=st-gr>${mins}</div></div>
+<div class=st-two2>
+<div class="st-card st-c2"${ta?` role=button tabindex=0 onclick="MU.sopen('art')" onkeydown="${KB}"`:''}><div class=st-hd><div><div class=st-lb>Artista mais ouvido</div><div class="st-nmb st-blue">${ta?esc(ta.n):'—'}</div></div>${ta?I.chev:''}</div><div class=st-img>${circ(ta&&ta.img&&tByName(ta.img),ta?ta.n:'?')}</div></div>
+<div class="st-card st-c2"><div class=st-hd><div><div class=st-lb>Música mais ouvida</div><div class="st-nmb st-yel">${tt?esc(title):'—'}</div></div></div><div class=st-img>${sq(tk)}${tt&&tt[1].nv?'<span class=st-badge>Novidade</span>':''}</div></div>
+</div>
+${tt?`<div class="st-card st-bigc"><div class=st-bg style="${tk?artSt(tk):'background:#2a2a2a'}">${tk?artIc(tk):I.note}</div><div class=st-bgt><div class=st-an>${esc(title)}</div>${tart?`<div class=st-sm>${esc(tart)}</div>`:''}<div class=st-as><b>${fN(tt[1].s)}</b> de escuta${tt[1].p?` · <b>${tt[1].p}</b> ${tt[1].p==1?'reprodução':'reproduções'}`:''}</div></div></div>`:''}</div>`;
 }
 
 /* ---- reprodução local ---- */
@@ -1295,51 +1322,52 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-dvb.on{color:#1db954}
 .sp-dvb svg{font-size:20px}
 .sp-dvb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.st-wrap{display:flex;flex-direction:column;gap:18px;margin:4px 0 8px}
-.st-hero{border-radius:16px;padding:22px 18px 16px}
-.st-ttl{font-size:clamp(32px,8vw,48px);font-weight:900;letter-spacing:-.03em;line-height:1.05;margin:0}
-.st-per{color:#ffffffb3;font-size:13px;margin:6px 0 0}
-.st-emp{color:#ffffffb3;font-size:14px;line-height:1.5;margin:18px 0 6px}
-.st-tot{margin-top:22px}
-.st-big{font-size:clamp(46px,12vw,76px);line-height:1;letter-spacing:-.04em}
-.st-big b,.st-v b{font-weight:900}
-.st-big small{font-size:.32em;font-weight:700;color:#ffffffb3;margin:0 8px 0 4px;letter-spacing:0}
-.st-v small{font-size:.6em;font-weight:700;color:#ffffffb3;margin:0 6px 0 3px}
-.st-lbl{font-size:13px;font-weight:600;color:#ffffffb3;margin-top:6px}
-.st-mm{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
-.st-mm>div{background:#0000004d;border-radius:12px;padding:12px 14px}
-.st-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#ffffffb3}
-.st-v{font-size:22px;font-weight:800;margin-top:4px}
-.st-wk{display:flex;align-items:flex-end;gap:8px;height:84px;margin-top:18px}
-.st-wk>div{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;height:100%}
-.st-wk i{display:block;width:100%;max-width:30px;border-radius:4px 4px 2px 2px;background:#ffffff40}
-.st-wk .on i{background:#1db954}
-.st-wk span{font-size:11px;font-weight:700;color:#ffffff99}
-.st-nav{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
-.st-sec{display:flex;flex-direction:column;gap:10px;scroll-margin-top:12px;min-width:0}
-.st-eye{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#b3b3b3;margin:0 2px}
-.st-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:18px}
-.st-feat{--ca:112px;display:flex;align-items:center;gap:16px;border-radius:16px;padding:16px;min-width:0}
-.st-lg{--ca:132px}
-.st-art,.st-av{width:var(--ca);height:var(--ca);flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;box-shadow:0 6px 18px #0006}
-.st-av{border-radius:50%;background:#2a2a2a;color:#ffffffaa;font-weight:800;font-size:calc(var(--ca)*.4);box-shadow:none}
-.st-av svg{width:.8em;height:.8em}
-.st-tx{flex:1;min-width:0}
-.st-nm{font-size:clamp(19px,4.6vw,26px);font-weight:900;letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
-.st-sub{color:#b3b3b3;font-size:14px;margin-top:4px;line-height:1.4}
-.st-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:12px;font-size:13px;color:#b3b3b3}
-.st-meta b{color:#fff}
-.st-list{display:flex;flex-direction:column;gap:2px}
-.st-row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px}
-.st-row:hover{background:#ffffff14}
-.st-n{width:18px;text-align:center;color:#b3b3b3;font-weight:700;font-size:15px;flex:none}
-.st-cv{width:44px;height:44px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px}
-.st-i{flex:1;min-width:0}
-.st-rt{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.st-ra{font-size:13px;color:#b3b3b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.st-rs{font-size:13px;color:#b3b3b3;flex:none}
-@media(min-width:720px){.st-lg{--ca:168px}.st-feat{--ca:132px}.st-hero{padding:30px 28px 22px}.st-mm{max-width:460px}.st-wk{max-width:460px}}
-@media(max-width:380px){.st-feat{--ca:92px;gap:12px}.st-lg{--ca:104px}}
+/* ---- "Sua escuta" no estilo Spotify: Sua Máquina do Tempo e Artistas mais tocados ---- */
+.st{padding-top:8px}
+.st-pg{max-width:560px;margin:0 auto}
+.st-bk{display:flex;align-items:center;min-height:44px;margin-left:-6px}
+.st-bk .sp-ib,.st-ah .sp-ib{font-size:26px;color:#fff}
+.st-h1{font-size:clamp(28px,8vw,36px);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:14px 0 22px}
+.st-mo{display:flex;align-items:center;gap:6px;font-size:18px;font-weight:700;margin:0 0 18px}
+.st-mo span{color:#8a8a8a}
+.st-info{font-size:18px;padding:4px}
+.st-card{background:#242424;border-radius:8px;padding:14px;min-width:0;color:#fff}
+.st-pv{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer}
+.st-pv svg{color:#b3b3b3;font-size:22px}
+.st-lb{font-size:12.5px;color:#fff}
+.st-gr{font-size:clamp(28px,8vw,36px);font-weight:800;color:#1ed760;margin-top:10px;letter-spacing:-.02em}
+.st-sm{font-size:13px;color:#b3b3b3;line-height:1.45;margin:0}
+.st-two2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.st-c2{display:flex;flex-direction:column;min-height:190px}
+.st-c2[role=button]{cursor:pointer}
+.st-hd{display:flex;justify-content:space-between;gap:6px}
+.st-hd>div{min-width:0}
+.st-hd svg{color:#b3b3b3;font-size:20px}
+.st-nmb{font-size:15px;font-weight:700;margin-top:4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.st-blue{color:#509bf5}
+.st-yel{color:#f5d547}
+.st-img{margin-top:auto;padding-top:10px;display:flex;align-items:flex-end;justify-content:space-between;gap:6px}
+.st-ci{width:min(104px,100%);aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;background:#2a2a2a;color:#ffffff88;flex:none}
+.st-ci svg{width:.6em;height:.6em}
+.st-sq{border-radius:4px;width:min(104px,70%)}
+.st-badge{display:inline-block;background:#3a3a3a;color:#fff;font-size:11px;font-weight:600;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.st-bigc{margin-top:8px}
+.st-bg{width:100%;aspect-ratio:1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:96px;color:#ffffff55}
+.st-bgt{margin-top:14px}
+.st-an{font-size:18px;font-weight:800;overflow-wrap:anywhere}
+.st-as{font-size:13px;color:#b3b3b3;margin-top:6px}
+.st-as b{color:#fff;font-weight:500}
+.st-ah{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;margin-left:-6px}
+.st-at{text-align:center;font-size:16px;font-weight:700}
+.st-sum{font-size:clamp(26px,7.4vw,34px);font-weight:800;line-height:1.2;margin:10px 0 26px;letter-spacing:-.02em}
+.st-ar{display:flex}
+.st-rk{width:36px;flex:none;padding-top:22px;color:#509bf5;font-size:12px;font-weight:700}
+.st-rb{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:16px 0;border-top:1px solid #2e2e2e}
+.st-ar:first-child .st-rb{border-top:0}
+.st-rt2{flex:1;min-width:0}
+.st-rt2 .st-badge{margin-bottom:8px}
+.st-c3{width:84px;font-size:30px}
+@media(min-width:720px){.st-c2{min-height:230px}.st-ci{width:132px}.st-c3{width:96px}}
 </style>`;
 
 /* ---- telas ---- */
@@ -1459,6 +1487,7 @@ function menuView(){
 ${L.map(p=>`<div class=sp-mi onclick="MU.goto('${p[0]}')"><span>${esc(p[2])}</span>${I.chev}</div>`).join('')}</div>`;
 }
 const view=()=>{
+  if(STV)return CSS+'<div class="sp hb st"><div id=mu-stats>'+(stLast=statsCard())+'</div><div class=sp-bot><div class=sp-bi>'+mini()+bnav()+'</div></div></div>';
   if(MENU)return menuView();
   let b;
   if(RC)b=rcard()+rlcard();
@@ -1503,9 +1532,12 @@ dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;migStats();d
 return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
   sp(i){const t=T[i];if(!t)return;recAdd(key(t));play(i,1,null)},
-  tab(k){TAB=k;draw()},
+  tab(k){STV=0;MENU=0;TAB=k;draw()},
   menu(v){MENU=v?1:0;draw();window.scrollTo(0,0)},
-  goto(p){MENU=0;go(p)},
+  goto(p){MENU=0;STV=0;go(p)},
+  sopen(v){STV=v;draw();window.scrollTo(0,0)},
+  sback(){if(STV=='art')STV='main';else{STV=0;MENU=1}draw();window.scrollTo(0,0)},
+  sinfo(){say('O tempo vem da posição real das músicas e soma os aparelhos conectados. O mês é o atual.')},
   img:setImg,noimg:noImg,
   pn:()=>newPL(),po(id){PV=id;if(id)TAB='pls';draw()},pe:editPL,pt:addTo,pplay:playPL,
   pp:(id,i)=>play(i,1,id),
@@ -1525,7 +1557,6 @@ return{
   sy:syncDev,
   dsh,dsel,nph,npa,
   qp(i){play(i,1,ctx)},
-  stgo(id){const e=document.getElementById(id);if(e)e.scrollIntoView({behavior:'smooth',block:'start'})},
   dbg:()=>({ME,cells:Object.keys(CL.c).length,leg:Object.keys(CL.leg),tot:stGet().tot})
 };
 })();
