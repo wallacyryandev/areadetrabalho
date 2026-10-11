@@ -9,7 +9,10 @@
      Título, artistas, participações (feat.) e produtor/DJ são campos separados; o título nunca vira artista.
    - Tempo no formato 01:24 / 03:45 e tempo de escuta da sessão atual na tela "Tocando agora".
    - Media Session (tela de bloqueio) com título, artista, capa e nome da playlist.
-   Limitações: só MP3 com ID3v2.3/2.4 tem tags lidas (M4A/FLAC/OGG/ID3v2.2 usam o nome do arquivo). */
+   Limitações: só MP3 com ID3v2.3/2.4 tem tags lidas (M4A/FLAC/OGG/ID3v2.2 usam o nome do arquivo).
+
+   Estatísticas de escuta: gravadas em "células" (aparelho|dia|playlist|música) e sincronizadas entre os aparelhos
+   pareados pelo canal do Hub. A mescla toma o MÁXIMO de cada campo (idempotente); os totais são sempre recalculados. */
 const MU=(()=>{
 const els=[new Audio(),new Audio()];els.forEach(a=>a.preload='metadata');
 let el=els[0],pre=null,lk=0,lr=null;
@@ -75,10 +78,32 @@ const cl=s=>{
 const stem=n=>n.replace(/\.[^/.]+$/,'').replace(/_/g,' ').trim();
 const nm=n=>cl(stem(n));
 const mb=b=>(b/1048576).toFixed(1).replace('.',',')+' MB';
+
+/* ---- título animado do mini player (uma linha; desliza só se for maior que o espaço) ---- */
+let mqKey='',mqRO=null;
+function mqSetup(){
+  const box=document.querySelector('.sp-mini .sp-mq'),it=box&&box.firstElementChild;
+  if(!box||!it)return;
+  const dist=it.scrollWidth-box.clientWidth,
+        red=matchMedia('(prefers-reduced-motion: reduce)').matches,
+        k=it.textContent+'|'+box.clientWidth;
+  if(dist>2&&!red){
+    it.style.setProperty('--mqx',-(dist+8)+'px');
+    it.style.setProperty('--mqd',Math.max(6,dist/9)+'s');
+    if(!it.classList.contains('run')||k!==mqKey){it.classList.remove('run');void it.offsetWidth;it.classList.add('run')}
+  }else it.classList.remove('run');
+  mqKey=k;
+  if(mqRO)mqRO.disconnect();
+  if('ResizeObserver' in window){mqRO=new ResizeObserver(()=>requestAnimationFrame(mqSetup));mqRO.observe(box)}
+}
+addEventListener('resize',()=>requestAnimationFrame(mqSetup));
+addEventListener('orientationchange',()=>setTimeout(mqSetup,200));
+
 const draw=()=>{
   if(typeof page=='undefined'||page!='mus')return;
   const a=document.activeElement,id=a&&a.id,ss=a&&a.selectionStart;
   render();
+  requestAnimationFrame(mqSetup);
   if(DSO)dsUpd();
   if(NPO)npUpd();
   if(id&&id.indexOf('mu-q')==0){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(ss,ss)}catch(e){}}}
@@ -246,19 +271,18 @@ function build(m,name){
   m.album=g.album||'';m.artist=disp(main,feat);
 }
 
-/* ---- estatísticas de escuta (só neste aparelho, guardadas em localStorage) ----
+/* ---- estatísticas de escuta ----
    O tempo vem da posição real da música (não de um relógio), então conta certo mesmo com a tela apagada
    ou o app em segundo plano. Uma "reprodução" conta quando você ouve 30 s (ou metade, nas músicas curtas).
-   Tempo geral: cada intervalo ouvido conta UMA vez. Tempo por artista: cada artista da faixa (inclusive
-   participações) recebe o intervalo inteiro, em STT.a2 (total) e STT.ad (por dia).
-   STT.ar (formato antigo, "cantor" lido do nome do arquivo) é preservado intacto; é migrado uma vez para STT.a2. */
-/* FONTE ÚNICA DO TEMPO DE ESCUTA
-   - STT (memória) é o único estado que as telas leem; o armazenamento é o localStorage 'hub_mstats'.
-   - Toda escrita passa por stApply(): soma o intervalo em STT e também em STD (o que ainda NÃO foi gravado).
-   - Ao gravar (saveST), lê o que está salvo agora, soma só o STD e regrava. Assim, duas abas/janelas abertas nunca
-     sobrescrevem o tempo uma da outra com um valor antigo. O evento 'storage' traz para a memória o que outra aba gravou.
-   - Depois de cada mudança, stEmit() atualiza (no máximo 1x por segundo) as áreas visíveis: stUi(). */
-const STK='hub_mstats',STKEYS=['d','tr','pl','ar','a2','ad','aq'];
+   ARMAZENAMENTO EM CÉLULAS: cada aparelho grava células "aparelho|dia|playlist|música" -> {s segundos, p reproduções, ar artistas}.
+   Só o aparelho dono escreve na sua célula e os valores só crescem. A mescla entre aparelhos/abas toma o MÁXIMO de cada
+   campo (idempotente: receber duas vezes não soma duas vezes; valor atrasado não sobrescreve valor mais novo).
+   Os totais (geral, por música, artista, dia, playlist) são SEMPRE recalculados a partir das células (stBuild).
+   Tempo geral: cada intervalo ouvido conta UMA vez. Tempo por artista: cada artista da faixa (inclusive participações)
+   recebe o intervalo inteiro.
+   Histórico antigo (hub_mstats, formato agregado) é importado uma vez como "legado" do aparelho (CL.leg[idDoAparelho]) e
+   a chave antiga NÃO é apagada. */
+const STK='hub_mstats',CK='hub_mcells',STKEYS=['d','tr','pl','ar','a2','ad','aq'];
 const stBlank=()=>({tot:0,d:{},tr:{},pl:{},ar:{},a2:{},ad:{},aq:{}});
 /* soma recursiva: números somam, objetos descem, outros valores (texto/flag) substituem */
 const stSum=(b,d)=>{Object.keys(d).forEach(k=>{const v=d[k];if(typeof v=='number')b[k]=(typeof b[k]=='number'?b[k]:0)+v;else if(v&&typeof v=='object'){if(!b[k]||typeof b[k]!='object')b[k]={};stSum(b[k],v)}else b[k]=v});return b};
@@ -273,23 +297,49 @@ function stNorm(s){
   const o={};Object.keys(s.tr).forEach(k=>{const v=s.tr[k]||{},n=cl(k),e=o[n]||(o[n]={s:0,p:0});e.s+=v.s||0;e.p+=v.p||0});s.tr=o;
   return s;
 }
-/* lê o que está salvo: undefined = sem acesso ao armazenamento; null = nada salvo (ou ilegível) */
+/* lê o formato antigo: undefined = sem acesso ao armazenamento; null = nada salvo (ou ilegível) */
 const stRead=()=>{let r;try{r=localStorage.getItem(STK)}catch(e){return undefined}if(r==null)return null;try{r=JSON.parse(r)}catch(e){return null}return r&&typeof r=='object'?r:null};
-let STD={},stDirty=0,emT=0,stLast='';
-const _raw=stRead();
-let STT=stNorm(_raw);
-if(_raw&&Object.keys(_raw.tr||{}).some(k=>cl(k)!=k))stDirty=1;
-let stPos=-1,stT=0,stCur=-2,stAcc=0,stCnt=0;
+let stPos=-1,stT=0,stCur=-2,stAcc=0,stCnt=0,emT=0,stLast='',CLd=0,stB=1,STT=stBlank();
 const stDay=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
-/* traz para a memória o que está salvo (de outra aba) + o que ainda não foi gravado aqui */
-function stSync(){const r=stRead();if(r===undefined)return;STT=stNorm(stSum(stNorm(r),STD))}
-function stApply(dd){stSum(STT,dd);stSum(STD,dd);stDirty=1;stEmit()}
-function saveST(){
-  if(!stDirty)return;
-  const r=stRead();
-  const out=r===undefined?STT:stNorm(stSum(stNorm(r),STD));   /* sem leitura possível: grava a memória, como antes */
-  try{localStorage.setItem(STK,JSON.stringify(out));STT=out;STD={};stDirty=0}catch(e){}  /* se falhar, nada é perdido: o STD continua pendente */
+const ME=(typeof SY!='undefined'&&SY._c&&SY._c().id)||'local';
+
+/* ---- células: armazenamento local + mescla (máximo por campo) ---- */
+const clRead=()=>{try{const r=JSON.parse(localStorage.getItem(CK));return r&&r.c&&r.leg?r:null}catch(e){return null}};
+const clOk=c=>c&&typeof c.n=='string'&&c.n.length<300&&typeof c.dv=='string'&&c.dv.length<40&&/^\d{4}-\d\d-\d\d$/.test(c.d)&&c.s>=0&&c.s<172800&&(c.p||0)>=0&&(c.p||0)<5000&&(!c.ar||(Array.isArray(c.ar)&&c.ar.length<=12&&c.ar.every(x=>typeof x=='string'&&x.length<120)));
+const cKey=c=>c.dv+'|'+c.d+'|'+(c.pl||'')+'|'+c.n;
+function clMerge(a,b){
+  let ch=0;
+  Object.keys(b.leg||{}).forEach(id=>{const x=a.leg[id],y=b.leg[id];if(!x||(!x.mig&&y.mig)){a.leg[id]=y;ch++}});
+  Object.keys(b.c||{}).forEach(k=>{
+    const x=a.c[k],y=b.c[k];if(!x){a.c[k]=y;ch++;return}
+    const s=Math.max(x.s||0,y.s||0),p=Math.max(x.p||0,y.p||0),
+      ar=(y.s||0)>(x.s||0)&&y.ar&&y.ar.length?y.ar:(x.ar&&x.ar.length?x.ar:(y.ar||[]));
+    if(s!=x.s||p!=x.p||ar!==x.ar){x.s=s;x.p=p;x.ar=ar;x.u=Math.max(x.u||0,y.u||0);ch++}
+  });
+  return ch;
 }
+let CL=clRead()||{v:2,leg:{},c:{}};
+if(!CL.leg[ME]){const o=stRead();CL.leg[ME]=stNorm(o);CLd=1}   /* histórico antigo deste aparelho, importado uma vez; hub_mstats não é apagado */
+function clSave(){
+  if(!CLd)return;
+  const r=clRead();if(r)clMerge(CL,r);          /* traz o que outra aba gravou; nunca diminui */
+  try{localStorage.setItem(CK,JSON.stringify(CL));CLd=0}catch(e){}  /* se falhar, CLd continua 1 e tenta de novo */
+}
+function saveST(){clSave()}
+/* totais sempre derivados das células (nunca somados ao remoto) */
+function stBuild(){
+  const o=stBlank();
+  Object.values(CL.leg).forEach(l=>stSum(o,l));
+  Object.values(CL.c).forEach(c=>{
+    const s=c.s||0;if(!(s>0)&&!c.p)return;
+    o.tot+=s;o.d[c.d]=(o.d[c.d]||0)+s;
+    const t=o.tr[c.n]||(o.tr[c.n]={s:0,p:0});t.s+=s;t.p+=c.p||0;
+    if(c.pl)o.pl[c.pl]=(o.pl[c.pl]||0)+s;
+    (c.ar||[]).forEach(n=>{const k=ak(n),e=o.a2[k]||(o.a2[k]={n,s:0});e.s+=s;const dd=o.ad[c.d]||(o.ad[c.d]={});dd[k]=(dd[k]||0)+s});
+  });
+  return stNorm(o);
+}
+const stGet=()=>{if(stB){STT=stBuild();stB=0}return STT};
 /* atualiza o que está na tela e depende do tempo de escuta (texto da sessão e página "Sua escuta"/perfil) */
 function stUi(){
   const tt=$('#mu-tt');if(tt)tt.textContent=tline();
@@ -299,22 +349,49 @@ function stUi(){
   }
 }
 function stEmit(){if(emT)return;emT=setTimeout(()=>{emT=0;stUi()},1000)}
-/* credita o intervalo a cada artista da faixa */
-function creditA(m,dt,dk){
-  const a2={},ad={};
-  crd(m).forEach(n=>{const k=ak(n);a2[k]={n,s:dt};ad[k]=dt});
-  if(Object.keys(a2).length)stApply({a2,ad:{[dk]:ad}});
+/* grava o intervalo na célula (aparelho|dia|playlist|música); o tempo geral conta uma vez por célula */
+let DQ=new Set(),DQt=0;
+function cellAdd(dk,name,plId,dt,p,m){
+  const k=ME+'|'+dk+'|'+(plId||'')+'|'+name;
+  const c=CL.c[k]||(CL.c[k]={dv:ME,d:dk,pl:plId||'',n:name,s:0,p:0,ar:[]});
+  c.s+=dt;c.p+=p;c.u=Date.now();
+  if(m.rd)c.ar=crd(m);else{m.pend=m.pend||new Set();m.pend.add(k)}   /* artistas só depois de ler as tags */
+  CLd=1;stB=1;DQ.add(k);if(!DQt)DQt=setTimeout(cflush,5000);stEmit();
 }
-/* enquanto as tags da faixa ainda não foram lidas, o tempo fica pendente (evita creditar um palpite do nome do arquivo) */
+/* enquanto as tags da faixa ainda não foram lidas, os artistas ficam pendentes (evita creditar um palpite do nome do arquivo) */
 function flushPend(m){
   const p=m.pend;m.pend=null;if(!p)return;
-  Object.keys(p).forEach(dk=>creditA(m,p[dk],dk));
+  p.forEach(k=>{const c=CL.c[k];if(c){c.ar=crd(m);DQ.add(k)}});CLd=1;stB=1;
 }
-/* migra o formato antigo uma única vez, sem apagar nada.
+/* ---- sincronização entre aparelhos pareados (mesmo canal do Hub) ---- */
+function csend(L,only){
+  const oc=only?[only]:openConns();if(!oc.length)return;
+  for(let i=0;i<L.length;i+=60){const m=JSON.stringify({t:'mu-sx',c:L.slice(i,i+60)});oc.forEach(c=>{try{c.send(m)}catch(e){}})}
+}
+function cflush(){DQt=0;clSave();if(!DQ.size)return;const L=[...DQ].map(k=>CL.c[k]).filter(Boolean);DQ.clear();csend(L)}
+function digest(){const g={};Object.values(CL.c).forEach(c=>{const k=c.dv+'|'+c.d,e=g[k]||(g[k]=[0,0]);e[0]++;e[1]+=Math.round((c.s||0)*10)});return g}
+const sendDigest=c=>sendJ(c,{t:'mu-sd',g:digest(),leg:Object.keys(CL.leg)});
+function onDigest(c,m){
+  const g=m.g||{},mine=digest(),L=Object.values(CL.c).filter(x=>{const k=x.dv+'|'+x.d,r=g[k],q=mine[k];return!r||r[0]!=q[0]||r[1]!=q[1]});
+  if(L.length)csend(L,c);
+  const lg={};Object.keys(CL.leg).forEach(id=>{if(id==ME||!(m.leg||[]).includes(id))lg[id]=CL.leg[id]});
+  if(Object.keys(lg).length)sendJ(c,{t:'mu-sx',leg:lg});
+}
+function onSx(c,m){
+  const t={leg:{},c:{}};
+  Object.keys(m.leg||{}).slice(0,20).forEach(id=>{if(id.length<40&&m.leg[id]&&typeof m.leg[id]=='object')t.leg[id]=stNorm(m.leg[id])});
+  (Array.isArray(m.c)?m.c:[]).slice(0,100).forEach(x=>{if(clOk(x))t.c[cKey(x)]={dv:x.dv,d:x.d,pl:String(x.pl||''),n:x.n,s:+x.s||0,p:+x.p||0,ar:(x.ar||[]).slice(),u:+x.u||0}});
+  if(!clMerge(CL,t))return;
+  CLd=1;stB=1;clSave();stEmit();
+  openConns().forEach(x=>{if(x!==c)sendJ(x,m)});   /* repassa; só continua se algo mudou */
+}
+setInterval(()=>openConns().forEach(sendDigest),60000);
+/* migra o formato antigo (cantor lido do nome do arquivo) uma única vez, só no legado deste aparelho.
    Lê as tags de todas as faixas (só o cabeçalho ID3) para saber quais "cantores" antigos eram, na verdade, títulos de música. */
 let migRun=0;
 async function migStats(){
-  if(STT.mig||migRun||!T.length)return;
+  const L=CL.leg[ME];
+  if(!L||L.mig||migRun||!T.length)return;
   migRun=1;
   try{
     const tt=new Set(),ar=new Set();
@@ -326,9 +403,9 @@ async function migStats(){
         if(g.artist){const a=parseArt(g.artist);a.main.concat(a.feat).forEach(n=>ar.add(ak(n)))}
       }else f.main.concat(f.feat).forEach(n=>ar.add(ak(n)));  /* sem tag: só o nome do arquivo, que vale como artista */
     }
-    stSync();if(STT.mig)return;   /* outra aba pode ter migrado enquanto líamos as tags */
+    const L2=CL.leg[ME];if(L2.mig)return;
     const dd={mig:true,a2:{},aq:{}};
-    Object.entries(STT.ar||{}).forEach(([n,s])=>{
+    Object.entries(L2.ar||{}).forEach(([n,s])=>{
       if(!(s>0))return;
       const k=ak(n);
       /* o "cantor" antigo é o título de uma música da biblioteca e nenhuma tag o confirma como artista: quarentena (aq), preservado */
@@ -336,7 +413,8 @@ async function migStats(){
       const p=parseArt(n);
       uniq(p.main.concat(p.feat)).forEach(x=>{const kk=ak(x),e=dd.a2[kk]||(dd.a2[kk]={n:x,s:0});e.s+=s});
     });
-    stApply(dd);saveST();
+    stSum(L2,dd);CLd=1;stB=1;clSave();stEmit();
+    openConns().forEach(c=>sendJ(c,{t:'mu-sx',leg:{[ME]:L2}}));
   }finally{migRun=0}
 }
 
@@ -455,19 +533,15 @@ function stTick(fin){
   stPos=fin?-1:p;stT=now;
   if(dt<=0||dt>Math.max(2,wall*(el.playbackRate||1)+1))return;
   const t=T[cur],name=nm(t.name),dk=stDay(),m=meta(t),pl=ctx!=null?pget(ctx):null;
-  const dd={tot:dt,d:{[dk]:dt},tr:{[name]:{s:dt,p:0}}};
-  if(pl)dd.pl={[pl.id]:dt};
-  SESS+=dt;
-  stAcc+=dt;if(!stCnt&&stAcc>=Math.min(30,(curDur()||60)/2)){stCnt=1;dd.tr[name].p=1}
-  stApply(dd);   /* o total geral conta uma vez só */
-  /* cada artista da faixa (inclusive participações) recebe o intervalo */
-  if(m.rd)creditA(m,dt,dk);else{m.pend=m.pend||{};m.pend[dk]=(m.pend[dk]||0)+dt}
+  SESS+=dt;stAcc+=dt;let pp=0;
+  if(!stCnt&&stAcc>=Math.min(30,(curDur()||60)/2)){stCnt=1;pp=1}
+  cellAdd(dk,name,pl?pl.id:'',dt,pp,m);   /* o total geral conta uma vez só; cada artista da faixa recebe o intervalo ao recalcular */
 }
 setInterval(saveST,10000);
-addEventListener('pagehide',saveST);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)saveST()});
-/* outra aba gravou: traz o total somado para a memória e atualiza a tela */
-addEventListener('storage',e=>{if(e.key==STK||e.key===null){stSync();stUi()}});
+addEventListener('pagehide',()=>{cflush()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cflush()});
+/* outra aba gravou: traz as células para a memória e atualiza a tela */
+addEventListener('storage',e=>{if(e.key==CK){const r=clRead();if(r&&clMerge(CL,r)){stB=1;stUi()}}});
 const fT=s=>{s=Math.round(s);return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h '+String(Math.floor(s%3600/60)).padStart(2,'0')+' min'};
 const topOf=(o,f)=>Object.entries(o).filter(e=>f?f(e):1).sort((a,b)=>(b[1].p-a[1].p)||((b[1].s!=null?b[1].s:b[1])-(a[1].s!=null?a[1].s:a[1])))[0];
 /* ---- página "Sua escuta" (redesenhada; usa os mesmos dados de STT, sem alterar os cálculos) ---- */
@@ -477,8 +551,9 @@ const tintBg=(c,a)=>c?'linear-gradient('+(a||'180deg')+',hsl('+c.h+','+c.s+'%,24
 const fTb=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?'<b>'+h+'</b><small>h</small><b>'+m+'</b><small>min</small>':m?'<b>'+m+'</b><small>min</small>':'<b>'+s+'</b><small>s</small>'};
 const dkey=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 function statsCard(){
+  const STT=stGet();
   const since=Object.keys(STT.d).sort()[0],sdt=since?new Date(since+'T12:00:00'):null;
-  const per=sdt&&!isNaN(sdt)?'Desde '+sdt.toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})+' · neste aparelho':'Neste aparelho';
+  const per=sdt&&!isNaN(sdt)?'Desde '+sdt.toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})+' · todos os aparelhos conectados':'Todos os aparelhos conectados';
   if(STT.tot<5)return`<div class=st-wrap id=st-hero><div class=st-hero style="background:${tintBg(null)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p><p class=st-emp>Ouça algumas músicas para ver aqui o seu tempo de escuta, a música, a playlist e o artista mais ouvidos.</p></div></div>`;
   const now=new Date(),wk=[];
   for(let i=6;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);wk.push({l:d.toLocaleDateString('pt-BR',{weekday:'narrow'}).toUpperCase(),v:STT.d[dkey(d)]||0})}
@@ -590,7 +665,7 @@ function onAct(c){
 }
 
 on('play',()=>{blocked=0;myPlayAt=Date.now();act();keep(1);draw();bcast()});
-on('pause',()=>{stTick(1);keep(0);draw();bcast();stUi()});
+on('pause',()=>{stTick(1);cflush();keep(0);draw();bcast();stUi()});
 on('loadedmetadata',()=>{draw();bcast()});
 on('seeking',()=>{stPos=-1}); /* pular para outro ponto não conta como tempo ouvido */
 on('playing',()=>{stPos=el.currentTime;stT=Date.now()}); /* a contagem recomeça da posição em que a música retomou */
@@ -675,7 +750,7 @@ function bls(){const m=JSON.stringify(lsNow());openConns().forEach(c=>{try{c.sen
 const sched=()=>{clearTimeout(bt);bt=setTimeout(bcast,250)};
 
 /* ---- playlists: sincronização (vale a alteração mais recente de cada playlist) ---- */
-function hello(c){sendJ(c,lsNow());sendJ(c,stNow());PL.forEach(p=>sendJ(c,{t:'mu-pl',p}))}
+function hello(c){sendJ(c,lsNow());sendJ(c,stNow());PL.forEach(p=>sendJ(c,{t:'mu-pl',p}));sendDigest(c)}
 function bpl(p){openConns().forEach(c=>sendJ(c,{t:'mu-pl',p}))}
 function mergePL(p){
   if(!p||!p.id)return false;
@@ -712,6 +787,8 @@ function onData(c,d){
   else if(m.t=='mu-ls'){(R[id]=R[id]||{}).names=m.names||[];if(RC==id)draw()}
   else if(m.t=='mu-cmd')exec(m.a,m.v);
   else if(m.t=='mu-pl')onPl(c,m.p);
+  else if(m.t=='mu-sd')onDigest(c,m);
+  else if(m.t=='mu-sx')onSx(c,m);
   else if(m.t=='mu-go')onGo(c,m);
   else if(m.t=='mu-gf'){XE[id]='Esse aparelho não tem a música "'+String(m.n||'')+'". Use "Sincronizar" e tente de novo.';delete XS[id];if(RC==id)RC=null;draw();dsUpd()}
   else if(m.t=='mu-man')onMan(c,m);
@@ -834,9 +911,9 @@ function dcard(){
   const G=dups(),sk=new Set();let ex=0;
   T.forEach(t=>{const k=key(t);sk.has(k)?ex++:sk.add(k)});
   return`<div class=sp-card><div class=sp-row><b class=sp-i style="font-size:17px;cursor:default">Músicas repetidas</b><button class="sp-btn g sm" onclick="MU.dp()">Fechar</button></div>
-<p class=sp-s style="margin:8px 0">${G.length?G.length+(G.length==1?' grupo':' grupos')+' com nome igual. <span style="color:#f5a623">Idêntica</span> = mesmo nome e tamanho. <span style="color:#5aa9ff">Parecida</span> = mesmo nome, tamanho diferente (pode ser outra qualidade).':'Nenhuma música repetida encontrada.'}</p>
+<p class=sp-s style="margin:8px 0">${G.length?G.length+(G.length==1?' grupo':' grupos')+' com nome igual. <span style="color:#f5a623">Idêntica</span> = mesmo nome e tamanho. <span style="color:#b3b3b3">Parecida</span> = mesmo nome, tamanho diferente (pode ser outra qualidade).':'Nenhuma música repetida encontrada.'}</p>
 ${ex?`<button class=sp-btn onclick="MU.rx()">Remover ${ex} ${ex==1?'cópia idêntica':'cópias idênticas'}</button>`:''}
-${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k]||0)+1});return`<div style="margin-top:14px"><div class=sp-s><b style="color:#fff">${esc(nm(T[a[0]].name))}</b></div>${a.map(i=>`<div class=sp-r><div class=sp-i><div class=sp-n>${esc(T[i].name)}</div><div class=sp-s>${mb(T[i].size)} · ${kc[key(T[i])]>1?'<span style="color:#f5a623">idêntica</span>':'<span style="color:#5aa9ff">parecida</span>'}</div></div><button class=sp-ib onclick="MU.rm(${i})" aria-label="Remover" title="Remover">${I.x}</button></div>`).join('')}</div>`}).join('')}
+${G.slice(0,100).map(a=>{const kc={};a.forEach(i=>{const k=key(T[i]);kc[k]=(kc[k]||0)+1});return`<div style="margin-top:14px"><div class=sp-s><b style="color:#fff">${esc(nm(T[a[0]].name))}</b></div>${a.map(i=>`<div class=sp-r><div class=sp-i><div class=sp-n>${esc(T[i].name)}</div><div class=sp-s>${mb(T[i].size)} · ${kc[key(T[i])]>1?'<span style="color:#f5a623">idêntica</span>':'<span style="color:#b3b3b3">parecida</span>'}</div></div><button class=sp-ib onclick="MU.rm(${i})" aria-label="Remover" title="Remover">${I.x}</button></div>`).join('')}</div>`}).join('')}
 ${G.length>100?`<p class=sp-s style="margin-top:10px">Mostrando 100 de ${G.length} grupos. Remova alguns para ver o resto.</p>`:''}</div>`;
 }
 
@@ -1197,6 +1274,14 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 @media(max-width:430px){.sp-mini .sp-dvb span{display:none}}
 .sp-prog{position:absolute;left:10px;right:10px;bottom:4px;height:3px;border-radius:2px;background:#555;overflow:hidden}
 .sp-prog i{display:block;height:100%;background:#1db954}
+/* título do mini player: uma linha; desliza horizontalmente só quando maior que o espaço disponível */
+.sp-mini .sp-i{overflow:hidden}
+.sp-mq{white-space:nowrap;overflow:hidden;text-overflow:clip;line-height:1.3;height:1.3em}
+.sp-mqi{display:inline-block;will-change:transform}
+.sp-mqi.run{animation:sp-mq var(--mqd,8s) ease-in-out infinite}
+@keyframes sp-mq{0%,15%{transform:translateX(0)}45%,60%{transform:translateX(var(--mqx))}90%,100%{transform:translateX(0)}}
+.sp-mini .sp-s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
+@media(prefers-reduced-motion:reduce){.sp-mqi{display:block;overflow:hidden;text-overflow:ellipsis;animation:none!important}.sp-mq{text-overflow:ellipsis}}
 .sp-prof{display:flex;align-items:center;gap:14px;margin:6px 0 18px}
 .sp-av{width:64px;height:64px;border-radius:50%;background:#1db954;color:#000;font-size:28px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
 .sp-mi{display:flex;align-items:center;gap:12px;padding:14px 8px;border-radius:8px;cursor:pointer;font-size:16px;font-weight:600}
@@ -1270,7 +1355,7 @@ function ban(){
 /* Mini player (barra fixa de baixo, em todas as abas) */
 function mini(){
   const t=cur>=0&&T[cur],pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${t?artSt(t):'background:#2a2a2a'}" onclick="MU.nph(1)">${t?artIc(t):I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(meta(t).title):'Nada tocando'}</div><p class=sp-s>${t?esc(meta(t).artist||UNK):esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  return`<div class=sp-mini><div class=sp-cv style="${t?artSt(t):'background:#2a2a2a'}" onclick="MU.nph(1)">${t?artIc(t):I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class="sp-n sp-mq"><span class=sp-mqi>${t?esc(meta(t).title):'Nada tocando'}</span></div><p class=sp-s>${t?esc(meta(t).artist||UNK):esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
 /* Barra de navegação do Música (fixa embaixo) */
 const bnav=()=>`<div class=sp-nav>${[['home','Início',I.home],['lib','Músicas',I.note],['pls','Playlists',I.list],['dev','Aparelhos',I.dev]].map(a=>`<button class="sp-nb${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')"${TAB==a[0]?' aria-current=page':''}>${a[2]}<span>${a[1]}</span></button>`).join('')}</div>`;
@@ -1440,6 +1525,7 @@ return{
   sy:syncDev,
   dsh,dsel,nph,npa,
   qp(i){play(i,1,ctx)},
-  stgo(id){const e=document.getElementById(id);if(e)e.scrollIntoView({behavior:'smooth',block:'start'})}
+  stgo(id){const e=document.getElementById(id);if(e)e.scrollIntoView({behavior:'smooth',block:'start'})},
+  dbg:()=>({ME,cells:Object.keys(CL.c).length,leg:Object.keys(CL.leg),tot:stGet().tot})
 };
 })();
