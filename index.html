@@ -227,6 +227,19 @@ html{touch-action:manipulation}
 @media(pointer:coarse){input[type=checkbox]{width:22px;height:22px}input[type=checkbox]:checked::after{left:6px;top:2px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
+/* ===== Engrenagem de configurações (todas as páginas) + tela Configurações ===== */
+main{position:relative}
+.gm-hg{position:absolute;top:26px;right:28px;z-index:2}
+main.gm-on .ph,main.gm-on .vt-head{padding-right:42px}
+.gm-pf{display:flex;align-items:center;gap:14px}
+.gm-av{width:56px;height:56px;border-radius:50%;flex:none;object-fit:cover;background:var(--rs);border:1px solid var(--bd);color:var(--tx);display:grid;place-items:center;font-size:22px;font-weight:700}
+.gm-pf b{display:block;font-size:16px;font-weight:600}
+.gm-i{display:flex;align-items:center;gap:12px;padding:13px 12px;border-radius:10px;color:var(--tx);font-weight:500;cursor:pointer}
+.gm-i:hover{background:var(--hv)}
+.gm-i span{flex:1}
+.gm-i .i{color:var(--t2)}
+.gm-i.on{background:var(--hv)}
+@media(max-width:760px){.gm-hg{top:18px;right:14px}}
 </style></head><body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -240,6 +253,7 @@ html{touch-action:manipulation}
 <symbol id="i-note" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
 <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></symbol>
 <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></symbol>
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
 <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
@@ -273,7 +287,7 @@ const D=d=>{d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).pa
 
 let S;try{S=JSON.parse(localStorage.getItem('hub'))}catch(e){}
 
-const DEF=()=>({name:'',theme:'dark',rest:90,cats:['Estudos','Pessoal','Saúde'],tasks:[],events:[],subjects:[],sessions:[],qs:[],plans:[],workouts:[],habits:[],projects:[],notes:[],runs:[],use:{},timer:{acc:0,start:null,sel:''},active:null});S=Object.assign(DEF(),S||{});
+const DEF=()=>({name:'',theme:'dark',rest:90,cats:['Estudos','Pessoal','Saúde'],tasks:[],events:[],subjects:[],sessions:[],qs:[],plans:[],workouts:[],habits:[],projects:[],notes:[],runs:[],use:{},fin:[],photo:'',timer:{acc:0,start:null,sel:''},active:null});S=Object.assign(DEF(),S||{});
 
 const sv=()=>{SY.chk();try{localStorage.setItem('hub',JSON.stringify(S))}catch(e){}},RD=()=>{sv();render()};
 
@@ -378,7 +392,7 @@ return`${HD('Estatísticas')}<div class=g2><div class=c>${CT('Estudos')}${k('Hoj
 
 <div class=c>${CT('Produtividade')}${k('Tarefas concluídas',S.tasks.filter(x=>x.done).length+' de '+S.tasks.length)}${k('Hábitos cumpridos (total)',S.habits.reduce((a,h)=>a+Object.keys(h.log).length,0))}${k('Projetos concluídos',S.projects.filter(x=>x.status=='ok').length)}</div></div>`},
 
-cfg(){return`${HD('Configurações')}<div class=g2><div class=c>${CT('Perfil')}<label>Nome<input value="${esc(S.name)}" onchange="S.name=this.value;sv()"></label><label>Tema<select onchange="S.theme=this.value;sv();ap()"><option value=dark ${S.theme=='dark'?'selected':''}>Escuro</option><option value=light ${S.theme=='light'?'selected':''}>Claro</option></select></label><label>Descanso padrão (segundos)<input type=number value=${S.rest} min=10 onchange="S.rest=+this.value||90;sv()"></label></div>
+cfg(){return`${HD('Configurações')}<div class=g2><div class=c>${CT('Perfil')}<div class=gm-pf style="margin-bottom:12px">${avt()}<div class=row>${fbt()}</div></div><label>Nome<input value="${esc(S.name)}" onchange="S.name=this.value;sv()"></label><label>Tema<select onchange="S.theme=this.value;sv();ap()"><option value=dark ${S.theme=='dark'?'selected':''}>Escuro</option><option value=light ${S.theme=='light'?'selected':''}>Claro</option></select></label><label>Descanso padrão (segundos)<input type=number value=${S.rest} min=10 onchange="S.rest=+this.value||90;sv()"></label></div>
 
 <div class=c>${CT('Categorias',AB('A.cn()','Nova categoria'))}${S.cats.map((c,i)=>`<div class=r><span class=f>${esc(c)}</span>${IB(`S.cats.splice(${i},1);RD()`,'x','Remover categoria')}</div>`).join('')}</div>
 
@@ -476,12 +490,24 @@ nt(){const n=nf(),yn=v=>({t:'select',v:v?'1':'0',o:[['1','Ligado'],['0','Desliga
 
 im(f){if(!f)return;f.text().then(t=>{try{S=Object.assign(S,JSON.parse(t));RD();ap()}catch(e){alert('Arquivo inválido.')}})},
 
-/* Celular: folha "Mais" com as páginas que não cabem na barra inferior */
-menu(){const m=$('#md');m.innerHTML=`<div class=box><h3>Menu</h3><div class=ml>${PG.slice(4).map(p=>`<a class="${page==p[0]?'on':''}" onclick="UI.mc();go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span></a>`).join('')}</div><div class=sy>${SY.chip()}</div></div>`;m.className='on';m.onclick=e=>{if(e.target==m)UI.mc()}}};
+/* Engrenagem: abre a tela Configurações (perfil + lista de páginas), igual à da Música */
+menu(){go('mnu')},
+back(){try{history.back()}catch(e){go('home')}},
+/* foto do usuário: recorta quadrado, reduz para 256x256 e guarda leve (sincroniza com os outros aparelhos) */
+pho(f){if(!f)return;if(!(f.type||'').startsWith('image/')){alert('Escolha um arquivo de imagem.');return}const im=new Image(),u=URL.createObjectURL(f);im.onload=()=>{const Z=256,c=document.createElement('canvas');c.width=c.height=Z;const x=c.getContext('2d'),m=Math.min(im.width,im.height);x.drawImage(im,(im.width-m)/2,(im.height-m)/2,m,m,0,0,Z,Z);URL.revokeObjectURL(u);S.photo=c.toDataURL('image/jpeg',.8);RD()};im.onerror=()=>{URL.revokeObjectURL(u);alert('Não foi possível ler essa imagem.')};im.src=u},
+nop(){S.photo='';RD()}};
+
+/* avatar do usuário: foto, se tiver; senão a inicial do nome */
+const avt=()=>S.photo?`<img class=gm-av src="${esc(S.photo)}" alt="Foto de perfil">`:`<span class=gm-av>${esc((S.name||'?').trim().charAt(0).toUpperCase()||'?')}</span>`;
+const fbt=()=>`<input id=pf type=file accept="image/*" style="display:none" onchange="A.pho(this.files[0]);this.value=''"><button type=button class="b g sm" onclick="$('#pf').click()">${S.photo?'Trocar foto':'Adicionar foto'}</button>${S.photo?'<button type=button class="b g sm" onclick="A.nop()">Remover foto</button>':''}`;
+P.mnu=()=>`${UI.h(`<span style="display:inline-flex;align-items:center;gap:8px">${UI.ib('A.back()','left','Voltar')}Configurações</span>`)}<div class=c><div class=gm-pf>${avt()}<div><b>${esc(S.name||'Você')}</b><span class=s>Hub Pessoal</span></div></div></div><div class=s style="margin:16px 4px 6px">Ir para</div><div class=c style="padding:6px">${PG.map(p=>`<div class="gm-i${page==p[0]?' on':''}" onclick="go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span>${UI.i('right')}</div>`).join('')}</div>`;
 
 const go=p=>{if(p!=page)try{history.pushState({p},'')}catch(e){}page=p;render();window.scrollTo(0,0)},ap=()=>{document.documentElement.dataset.t=S.theme;const m=document.querySelector('meta[name=theme-color]');if(m)m.content=S.theme=='light'?'#FFFFFF':'#0F1216'};
 
-function render(){ap();$('#nv').innerHTML='<b><img src="icon-180.png" alt="">Hub</b>'+PG.map((p,k)=>`<a class="${page==p[0]?'on':''}${k>3?' x':''}" onclick="go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span></a>`).join('')+`<a class="mo${PG.slice(4).some(p=>p[0]==page)?' on':''}" onclick="A.menu()">${UI.i('more')}<span>Mais</span></a><div class=sy>${SY.chip()}</div>`;$('#mn').innerHTML=P[page]();tick()}
+function render(){ap();$('#nv').innerHTML='<b><img src="icon-180.png" alt="">Hub</b>'+PG.map((p,k)=>`<a class="${page==p[0]?'on':''}${k>3?' x':''}" onclick="go('${p[0]}')">${UI.i(UI.ic(p))}<span>${p[2]}</span></a>`).join('')+`<div class=sy>${SY.chip()}</div>`;$('#mn').innerHTML=P[page]();hg();tick()}
+
+/* engrenagem no canto superior direito de todas as páginas (a Música tem a sua própria) */
+function hg(){const mn=$('#mn');mn.classList.remove('gm-on');if(page=='mnu'||page=='mus'||page=='home')return;mn.insertAdjacentHTML('beforeend',`<button type=button class="ib gm-hg" onclick="A.menu()" aria-label="Configurações" title="Configurações">${UI.i('gear')}</button>`);if(mn.querySelector('.ph,.vt-head'))mn.classList.add('gm-on')}
 
 function tick(){const c=$('#clk');if(c)c.textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).replace(/^./,x=>x.toUpperCase())+' · '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});const T=S.timer,s=Math.floor((T.acc+(T.start?Date.now()-T.start:0))/1000),hm=String(Math.floor(s/3600)).padStart(2,'0')+':'+mmss(s%3600),t=$('#tm');if(t)t.textContent=hm;if(FO){$('#ft').textContent=hm;$('#ft').style.opacity=T.start?1:.45;$('#fp').innerHTML=T.start?UI.i('pause')+'Pausar':UI.i('play')+'Continuar';wl()}const r=$('#rs');if(r&&S.active){const l=Math.ceil(((S.active.rest||0)-Date.now())/1000);r.textContent=l>0?'Descanso: '+mmss(l):'Descanso: pronto';r.style.color=l>0?'var(--wa)':''}rd()}
 

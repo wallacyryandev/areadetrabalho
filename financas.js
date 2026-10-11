@@ -10,8 +10,9 @@
   }
 
   /* ---------- base ---------- */
-  const CATS = ['Alimentação', 'Transporte', 'Moradia', 'Lazer', 'Saúde', 'Estudos', 'Salário', 'Renda extra', 'Outros'];
-  const CC = { Moradia: '#7C93B8', Alimentação: '#8FAF8F', Transporte: '#C9A978', Lazer: '#B79AC4', Saúde: '#D9958A', Estudos: '#7FB0AD', Outros: '#8B93A1' };
+  const INV = 'Investimento';
+  const CATS = ['Alimentação', 'Transporte', 'Moradia', 'Lazer', 'Saúde', 'Estudos', INV, 'Salário', 'Renda extra', 'Outros'];
+  const CC = { Moradia: '#7C93B8', Alimentação: '#8FAF8F', Transporte: '#C9A978', Lazer: '#B79AC4', Saúde: '#D9958A', Estudos: '#7FB0AD', [INV]: '#B5BF6B', Outros: '#8B93A1' };
   const col = c => CC[c] || '#A3A9B5';
   const R = n => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const ym = d => D(d).slice(0, 7);
@@ -26,6 +27,10 @@
   const compact = v => { const a = Math.abs(v), s = v < 0 ? '−' : ''; return a >= 1e6 ? s + (a / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : a >= 1e3 ? s + (a / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : s + Math.round(a); };
   const nice = v => { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
   const inK = (L, k) => sum(L.filter(x => x.k === k), 'v');
+  /* investimento = saída de caixa que NÃO é gasto: sai do saldo, mas conta como economia */
+  const isInv = x => x.k === 'out' && x.cat === INV;
+  const outK = L => sum(L.filter(x => x.k === 'out' && !isInv(x)), 'v');
+  const invK = L => sum(L.filter(isInv), 'v');
   const inM = (k) => S.fin.filter(x => x.date && x.date.startsWith(k));
 
   /* estado de tela (não grava nada) */
@@ -155,13 +160,14 @@
     flt(k, v) { if (k === 'typ') typ = v; else if (k === 'cat') cat = v; else if (k === 'srt') srt = v; else if (k === 'scope') scope = v; render(); },
     q(v) { q = v; render(); const i = document.getElementById('vt-q'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } },
     form: x => [
-      { k: 'k', l: 'Tipo', t: 'select', v: x.k || 'out', o: [['out', 'Saída (gasto)'], ['in', 'Entrada (ganho)']] },
+      { k: 'k', l: 'Tipo', t: 'select', v: isInv(x) ? 'inv' : x.k || 'out', o: [['out', 'Saída (gasto)'], ['inv', 'Investimento (aplicação)'], ['in', 'Entrada (ganho)']] },
       { k: 't', l: 'Descrição', v: x.t, r: 1 },
       { k: 'v', l: 'Valor (R$)', t: 'number', v: x.v, r: 1 },
       { k: 'cat', l: 'Categoria', t: 'select', v: x.cat || 'Outros', o: CATS.map(c => [c, c]) },
       { k: 'date', l: 'Data', t: 'date', v: x.date, r: 1 }
     ],
-    parse: (o, id) => ({ id, k: o.k, t: o.t, v: Math.abs(parseFloat(String(o.v).replace(',', '.'))) || 0, cat: o.cat, date: o.date }),
+    /* Tipo "Investimento" grava como saída (k:'out') com categoria Investimento; os dados antigos continuam iguais */
+    parse: (o, id) => { const inv = o.k === 'inv' || (o.k === 'out' && o.cat === INV); return { id, k: inv ? 'out' : o.k, t: o.t, v: Math.abs(parseFloat(String(o.v).replace(',', '.'))) || 0, cat: inv ? INV : o.cat, date: o.date }; },
     add(k) { fm(k === 'in' ? 'Nova receita' : k === 'out' ? 'Nova despesa' : 'Novo lançamento', FN.form({ k, cat: k === 'in' ? 'Salário' : 'Outros', date: TD() }), o => { S.fin.push(FN.parse(o, uid())); RD(); }); },
     edit(id) {
       const x = S.fin.find(y => y.id === id); if (!x) return;
@@ -221,13 +227,13 @@
   const flowData = () => {
     const today = new Date(), [y, mo] = m.split('-').map(Number);
     const end = m === ym(today) ? today : new Date(y, mo, 0);
-    const mk = (from, to, lab, xl) => { const f = D(from), t = D(to), L = S.fin.filter(x => x.date && x.date >= f && x.date <= t); return { lab, xl, i: inK(L, 'in'), o: inK(L, 'out') }; };
+    const mk = (from, to, lab, xl) => { const f = D(from), t = D(to), L = S.fin.filter(x => x.date && x.date >= f && x.date <= t); return { lab, xl, i: inK(L, 'in'), o: outK(L) }; };
     if (per === '1S' || per === '1M') { const n = per === '1S' ? 7 : 30; return Array.from({ length: n }, (_, i) => { const d = addD(end, -(n - 1 - i)); return mk(d, d, dfmt(D(d)), dshort(d)); }); }
     if (per === '3M') return Array.from({ length: 13 }, (_, j) => { const to = addD(end, -(12 - j) * 7), from = addD(to, -6); return mk(from, to, dshort(from) + ' – ' + dshort(to), dshort(to)); });
     const n = per === '6M' ? 6 : 12, e = ym(end);
-    return Array.from({ length: n }, (_, i) => { const k = shift(e, -(n - 1 - i)), L = inM(k); return { lab: mlabel(k), xl: mshort(k), i: inK(L, 'in'), o: inK(L, 'out') }; });
+    return Array.from({ length: n }, (_, i) => { const k = shift(e, -(n - 1 - i)), L = inM(k); return { lab: mlabel(k), xl: mshort(k), i: inK(L, 'in'), o: outK(L) }; });
   };
-  const cats = L => { const o = {}; L.filter(x => x.k === 'out').forEach(x => o[x.cat] = (o[x.cat] || 0) + x.v); return Object.entries(o).sort((a, b) => b[1] - a[1]); };
+  const cats = L => { const o = {}; L.filter(x => x.k === 'out' && !isInv(x)).forEach(x => o[x.cat] = (o[x.cat] || 0) + x.v); return Object.entries(o).sort((a, b) => b[1] - a[1]); };
 
   /* ---------- peças de tela ---------- */
   const baseW = () => { const mn = document.getElementById('mn'); let w = 800; if (mn) { const cs = getComputedStyle(mn); w = mn.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); } return Math.max(280, w); };
@@ -236,9 +242,9 @@
   const delta = (cur, prev, goodUp) => prev > 0 ? { t: pct((cur - prev) / prev * 100) + ' vs mês anterior', c: ((cur - prev) >= 0) === goodUp ? 'up' : 'dn' } : { t: 'sem dados no mês anterior', c: '' };
 
   const dashView = W => {
-    const L = inM(m), inn = inK(L, 'in'), out = inK(L, 'out'), net = inn - out, pL = inM(shift(m, -1));
+    const L = inM(m), inn = inK(L, 'in'), out = outK(L), net = inn - out, pL = inM(shift(m, -1));
     const bal = sum(S.fin.filter(x => x.date && x.date <= m + '-31' && x.k === 'in'), 'v') - sum(S.fin.filter(x => x.date && x.date <= m + '-31' && x.k === 'out'), 'v');
-    const dI = delta(inn, inK(pL, 'in'), true), dO = delta(out, inK(pL, 'out'), false);
+    const dI = delta(inn, inK(pL, 'in'), true), dO = delta(out, outK(pL), false);
     const flow = flowData(), has = flow.some(d => d.i || d.o), cl = cats(L), recent = L.slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0).slice(0, 5);
     const cw = W >= 860 ? Math.floor((W - 16) * 2 / 3) - 42 : W - 42;
     return `<div class="vt-grid4">${card('Saldo total', 'wallet', R(bal), (net >= 0 ? '+' : '−') + R(Math.abs(net)) + ' neste mês', net >= 0 ? 'up' : 'dn')}${card('Receitas', 'inn', R(inn), dI.t, dI.c)}${card('Despesas', 'out', R(out), dO.t, dO.c)}${card('Economia', 'sav', R(net), inn > 0 ? Math.round(net / inn * 100) + '% da renda' : 'sem receitas no mês', inn > 0 ? (net >= 0 ? 'up' : 'dn') : '')}</div>
@@ -262,13 +268,14 @@
   };
 
   const anView = W => {
-    const L = inM(m), inn = inK(L, 'in'), out = inK(L, 'out'), cl = cats(L), pOut = inK(inM(shift(m, -1)), 'out');
+    const L = inM(m), inn = inK(L, 'in'), out = outK(L), inv = invK(L), cl = cats(L), pOut = outK(inM(shift(m, -1)));
     const ms = [5, 4, 3, 2, 1, 0].map(i => shift(m, -i)), labs = ms.map(mshort);
-    const I = ms.map(k => inK(inM(k), 'in')), O = ms.map(k => inK(inM(k), 'out')), N = I.map((v, i) => v - O[i]);
+    const I = ms.map(k => inK(inM(k), 'in')), O = ms.map(k => outK(inM(k))), N = I.map((v, i) => v - O[i]);
     const has = I.some(Boolean) || O.some(Boolean), cw = W >= 860 ? Math.floor((W - 16) / 2) - 42 : W - 42;
     const today = new Date(), days = m === ym(today) ? today.getDate() : new Date(+m.slice(0, 4), +m.slice(5), 0).getDate();
-    const top = L.filter(x => x.k === 'out').sort((a, b) => b.v - a.v)[0];
+    const top = L.filter(x => x.k === 'out' && !isInv(x)).sort((a, b) => b.v - a.v)[0];
     const ins = [];
+    if (inv > 0) ins.push(['Investido no mês', R(inv), inn > 0 ? Math.round(inv / inn * 100) + '% da renda aplicada' : 'aplicações de ' + mlabel(m)]);
     if (cl.length) ins.push(['Maior categoria de gasto', esc(cl[0][0]), `${R(cl[0][1])} · ${Math.round(cl[0][1] / out * 100)}% das despesas`]);
     if (inn > 0) ins.push(['Taxa de economia', Math.round((inn - out) / inn * 100) + '%', `${R(inn - out)} guardados de ${R(inn)} recebidos`]);
     if (pOut > 0) ins.push(['Despesas vs mês anterior', pct((out - pOut) / pOut * 100), `${R(out)} agora · ${R(pOut)} antes`]);
