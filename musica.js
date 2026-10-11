@@ -515,7 +515,7 @@ function meta(t){
     }
     if(m.pal===undefined)m.pal=null;
     if(!m.rd){m.rd=1;flushPend(m)}
-    if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg()}
+    if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg();lyLoad()}
     if(ch)covDraw();
   }).catch(()=>{if(m.pal===undefined)m.pal=null;if(!m.rd){m.rd=1;flushPend(m)}});
   return m;
@@ -627,6 +627,161 @@ ${n>50?`<p class=st-sm style="margin-top:10px">Mostrando 50 de ${n} artistas.</p
 ${tt?`<div class="st-card st-bigc"><div class=st-bg style="${tk?artSt(tk):'background:var(--mu-hi)'}">${tk?artIc(tk):I.note}</div><div class=st-bgt><div class=st-an>${esc(title)}</div>${tart?`<div class=st-sm>${esc(tart)}</div>`:''}<div class=st-as><b>${fN(tt[1].s)}</b> de escuta${tt[1].p?` · <b>${tt[1].p}</b> ${tt[1].p==1?'reprodução':'reproduções'}`:''}</div></div></div>`:''}</div>`;
 }
 
+/* ======================================================================
+   LETRAS AUTOMÁTICAS
+   Fonte: LRCLIB (https://lrclib.net) — API pública e gratuita, sem chave, com CORS liberado.
+   Ao começar uma música, o Hub usa título/artistas já identificados (tags ID3 ou nome do arquivo) e a duração real do
+   áudio para consultar /api/search. Só aceita um resultado se o título bater, o artista bater (quando conhecido) e a
+   duração for parecida (±6 s): letra errada é pior do que nenhuma letra. Prefere letra sincronizada (formato LRC).
+   Nada é inventado: sem resultado confiável, mostra "Letra não encontrada".
+   Privacidade: só título, artista e duração são enviados ao LRCLIB; o áudio nunca sai do aparelho.
+   Cache local (localStorage "hub_lyrics", até 80 músicas) para não repetir consultas.
+   ====================================================================== */
+/*LY-PURE-START*/
+const lyN=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+/* LRC -> [{t:segundos,x:texto}] ordenado. Aceita vários tempos por linha, [offset:ms] e tags de palavra <mm:ss.xx> */
+function lrcParse(txt){
+  const out=[];let off=0;
+  String(txt||'').split(/\r?\n/).forEach(ln=>{
+    const m=ln.match(/^\s*((?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]\s*)+)(.*)$/);
+    if(!m){const o=ln.match(/^\s*\[offset:\s*([+-]?\d+)\s*\]/i);if(o)off=(+o[1])/1000;return}
+    const x=m[2].replace(/<\d+:\d+(?:[.:]\d+)?>/g,'').trim();
+    m[1].replace(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g,(a,mi,se,fr)=>{
+      out.push({t:(+mi)*60+(+se)+(fr?(+fr)/Math.pow(10,fr.length):0),x});return a});
+  });
+  if(off)out.forEach(l=>{l.t=Math.max(0,l.t-off)});
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+/* índice do verso atual (último com t <= pos); -1 se ainda não começou */
+function lyAt(L,pos){
+  let lo=0,hi=L.length-1,r=-1;
+  while(lo<=hi){const m=(lo+hi)>>1;if(L[m].t<=pos){r=m;lo=m+1}else hi=m-1}
+  return r;
+}
+const lyMk=(sy,raw)=>sy?lrcParse(raw):String(raw||'').split(/\r?\n/);
+/* resultado da API -> {sy,raw,L} (sincronizada se der para ler; senão texto simples) */
+function lyBuild(c){
+  const s=c.syncedLyrics?lrcParse(c.syncedLyrics):[];
+  if(s.filter(l=>l.x).length>=2)return{sy:1,raw:String(c.syncedLyrics),L:s};
+  const p=String(c.plainLyrics||'').trim()||(c.syncedLyrics?String(c.syncedLyrics).replace(/\[[^\]]*\]/g,'').trim():'');
+  return p?{sy:0,raw:p,L:lyMk(0,p)}:null;
+}
+/* escolhe o melhor candidato com regras estritas. q={title,artists:[...],dur} */
+function lyPick(C,q){
+  if(!Array.isArray(C))return null;
+  const tt=lyN(q.title),aa=(q.artists||[]).map(lyN).filter(Boolean);
+  let best=null,bs=-1;
+  C.forEach(c=>{
+    if(!c||c.instrumental||!(c.syncedLyrics||c.plainLyrics))return;
+    const ct=lyN(c.trackName);if(!ct||!tt)return;
+    const tmt=ct==tt?2:((ct.includes(tt)||tt.includes(ct))&&Math.min(ct.length,tt.length)>=4?1:0);
+    if(!tmt)return;
+    const ca=lyN(c.artistName);
+    let am=0;
+    if(aa.length){am=aa.some(a=>ca&&(ca==a||ca.includes(a)||a.includes(ca)))?1:-1;if(am<0)return}
+    let dm=0;
+    if(q.dur>0&&c.duration>0){const d=Math.abs(c.duration-q.dur);if(d>6)return;dm=d<=2?2:1}
+    else if(!aa.length)return;   /* sem artista e sem duração para conferir: arriscado demais */
+    const sc=tmt*10+am*5+dm*3+(c.syncedLyrics?4:0);
+    if(sc>bs){bs=sc;best=c}
+  });
+  return best;
+}
+/*LY-PURE-END*/
+const LYB='https://lrclib.net/api/search',LYK='hub_lyrics',LYL=0.25;
+let LY=new Map(),LYX=0,LYA=-2;
+/* cache persistente */
+try{const o=JSON.parse(localStorage.getItem(LYK));if(o&&typeof o=='object')Object.keys(o).forEach(k=>{const e=o[k];
+  if(!e||(e.s!='ok'&&e.s!='none'))return;
+  if(e.s=='ok'){const L=lyMk(e.sy,e.raw);if(L.length)LY.set(k,{s:'ok',sy:e.sy?1:0,raw:e.raw,L,ts:e.ts||0,id:e.id})}
+  else LY.set(k,{s:'none',ts:e.ts||0})})}catch(e){}
+function lySave(){
+  try{
+    const A=[...LY.entries()].filter(x=>x[1].s=='ok'||x[1].s=='none').sort((a,b)=>b[1].ts-a[1].ts).slice(0,80),o={};
+    A.forEach(([k,e])=>{o[k]=e.s=='ok'?{s:'ok',sy:e.sy,raw:e.raw,ts:e.ts,id:e.id}:{s:'none',ts:e.ts}});
+    localStorage.setItem(LYK,JSON.stringify(o));
+  }catch(e){}
+}
+async function lyGet(p){
+  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),9000);
+  try{
+    const r=await fetch(LYB+'?'+new URLSearchParams(p),{signal:ctl.signal});
+    if(r.status==404)return[];
+    if(!r.ok)throw new Error('http '+r.status);
+    return await r.json();
+  }finally{clearTimeout(to)}
+}
+/* até 3 consultas, na ordem: título+artista principal; texto livre; título sem parênteses. Erro de rede => lança. */
+async function lyLookup(q){
+  const att=[];
+  if(q.main)att.push({track_name:q.title,artist_name:q.main});
+  att.push({q:((q.artists||[]).join(' ')+' '+q.title).trim()});
+  const t2=q.title.replace(/\s*[\(\[].*?[\)\]]/g,'').trim();
+  if(q.main&&t2&&t2!=q.title)att.push({track_name:t2,artist_name:q.main});
+  for(const p of att){
+    const c=lyPick(await lyGet(p),q);
+    if(!c)continue;
+    const b=lyBuild(c);
+    if(b)return Object.assign(b,{id:c.id,track:c.trackName,artist:c.artistName});
+  }
+  return null;
+}
+/* chamada ao começar/carregar uma música: precisa das tags lidas (artista) e da duração real */
+function lyLoad(force){
+  const t=cur>=0&&T[cur];if(!t||!navigator.onLine&&!LY.has(key(t)))return;
+  const m=meta(t);if(!m.rd||!(curDur()>0))return;
+  const k=key(t),e=LY.get(k),now=Date.now();
+  if(e&&!force&&(e.s=='ok'||e.s=='load'||(e.s=='none'&&now-e.ts<6048e5)||(e.s=='err'&&now-e.ts<30000)))return;
+  const q={title:m.title,main:m.artists[0]||m.feats[0]||'',artists:m.artists.concat(m.feats),dur:curDur()};
+  LY.set(k,{s:'load',ts:now});LYA=-2;lyUi();
+  lyLookup(q).then(r=>{
+    LY.set(k,r?{s:'ok',sy:r.sy,raw:r.raw,L:r.L,ts:Date.now(),id:r.id}:{s:'none',ts:Date.now()});
+    lySave();
+  }).catch(()=>{LY.set(k,{s:'err',ts:Date.now()})}).then(()=>{LYA=-2;lyUi()});
+}
+/* teste manual no console: await MU.lyt('Título','Artista',duraçãoEmSegundos) */
+async function lyTest(title,artist,dur){
+  try{
+    const r=await lyLookup({title,main:artist||'',artists:artist?[artist]:[],dur:+dur||0});
+    return r?{s:'ok',sincronizada:!!r.sy,linhas:r.L.length,id:r.id,faixa:r.track,artista:r.artist}:{s:'none'};
+  }catch(e){return{s:'err',msg:String(e&&e.message||e)}}
+}
+function lyBody(){
+  const t=cur>=0&&T[cur];if(!t)return'';
+  const e=LY.get(key(t));
+  if(!e||e.s=='load')return'<p class=ly-m>Buscando letra…</p>';
+  if(e.s=='none')return'<p class=ly-m>Letra não encontrada para esta música.</p>';
+  if(e.s=='err')return'<p class=ly-m>Não foi possível buscar a letra agora. <button class=ly-r onclick="MU.lyr()">Tentar de novo</button></p>';
+  if(e.sy){
+    const a=lyAt(e.L,curPos()+LYL),from=LYX?0:Math.max(0,a),to=LYX?e.L.length:Math.min(e.L.length,from+4);
+    const h=e.L.slice(from,to).map((l,j)=>{const i=from+j;return'<p class="ly-l'+(i==a?' on':'')+'" onclick="MU.lyk('+i+')">'+(l.x?esc(l.x):'♪')+'</p>'}).join('');
+    return LYX?'<div class=ly-sc>'+h+'</div>':h;
+  }
+  const L=LYX?e.L:e.L.filter(x=>x.trim()).slice(0,6);
+  const h=L.map(x=>x.trim()?'<p class="ly-l on">'+esc(x)+'</p>':'<p class=ly-g></p>').join('');
+  return (LYX?'<div class=ly-sc>'+h+'</div>':h)+'<p class=ly-m style="margin-top:8px">Letra sem sincronização por verso.</p>';
+}
+function lyCard(){
+  const t=cur>=0&&T[cur],e=t&&LY.get(key(t)),ok=e&&e.s=='ok';
+  return`<div class=np-ly><div class=np-lhr><div class=np-lh>Prévia da letra</div>${ok?`<button class=ly-x onclick="MU.lyx()" aria-label="${LYX?'Reduzir':'Ver letra completa'}">${LYX?'Reduzir':'Ver completa'}</button>`:''}</div><div id=mu-ly>${lyBody()}</div><p class=ly-at>Letras: LRCLIB</p></div>`;
+}
+/* atualiza só o cartão da letra (barato; chamado a cada mudança de verso) */
+function lyUi(){
+  if(!NPO)return;
+  const b=document.getElementById('mu-ly');if(!b)return;
+  b.innerHTML=lyBody();
+  const sc=b.querySelector('.ly-sc'),n=sc&&sc.querySelector('.on');
+  if(sc&&n)sc.scrollTop=Math.max(0,n.offsetTop-sc.clientHeight/2+n.offsetHeight/2);
+}
+function lyTick(){
+  if(!NPO||seeking)return;
+  const e=cur>=0&&T[cur]&&LY.get(key(T[cur]));
+  if(!e||e.s!='ok'||!e.sy)return;
+  const a=lyAt(e.L,curPos()+LYL);
+  if(a!==LYA){LYA=a;lyUi()}
+}
+
 /* ---- reprodução local ---- */
 const playEl=()=>el.play().catch(e=>{if(e&&e.name=='NotAllowedError'){blocked=1;bcast()}});
 function play(i,auto=1,c,back,pos){
@@ -700,13 +855,13 @@ function onAct(c){
 
 on('play',()=>{blocked=0;myPlayAt=Date.now();act();keep(1);draw();bcast()});
 on('pause',()=>{stTick(1);cflush();keep(0);draw();bcast();stUi()});
-on('loadedmetadata',()=>{draw();bcast()});
+on('loadedmetadata',()=>{draw();bcast();lyLoad()});
 on('seeking',()=>{stPos=-1}); /* pular para outro ponto não conta como tempo ouvido */
 on('playing',()=>{stPos=el.currentTime;stT=Date.now()}); /* a contagem recomeça da posição em que a música retomou */
 on('ended',()=>{stTick(1);stAcc=0;stCnt=0;stPos=-1});
 on('volumechange',()=>sched());
 on('timeupdate',()=>{
-  stTick();
+  stTick();lyLoad();lyTick();
   const tt=$('#mu-tt');if(tt)tt.textContent=tline();
   const rem=el.duration-el.currentTime;
   if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
@@ -1172,9 +1327,17 @@ const NPCSS=`#mu-np{position:fixed;inset:0;z-index:9000;visibility:hidden;pointe
 #mu-np .np-vol{display:none}
 @media(hover:hover) and (pointer:fine){#mu-np .np-vol{display:block}}
 /* prévia da letra */
-#mu-np .np-ly{background:var(--npc,#6e1024);border-radius:12px;padding:18px 18px 20px;margin-top:6px}
+#mu-np .np-ly{background:var(--npc,#6e1024);border-radius:12px;padding:18px 18px 14px;margin-top:6px}
+#mu-np .np-lhr{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 #mu-np .np-lh{font-size:16px;font-weight:800}
-#mu-np .np-ly p{margin:12px 0 0;font-size:14px;line-height:1.5;color:#ffffffcc}
+#mu-np .ly-x{background:#00000040;color:#fff;border:0;border-radius:999px;padding:6px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+#mu-np .ly-l{margin:0 0 10px;font-size:20px;font-weight:800;line-height:1.3;color:#ffffff80;cursor:pointer;overflow-wrap:anywhere;transition:color .25s}
+#mu-np .ly-l.on{color:#fff}
+#mu-np .ly-g{height:10px;margin:0}
+#mu-np .ly-sc{position:relative;max-height:55vh;max-height:55dvh;overflow-y:auto;overscroll-behavior:contain;padding-right:4px}
+#mu-np .ly-m{margin:0;font-size:13px;line-height:1.5;color:#ffffffcc}
+#mu-np .ly-r{background:none;border:0;color:#fff;text-decoration:underline;font:inherit;cursor:pointer;padding:0}
+#mu-np .ly-at{margin:10px 0 0;font-size:11px;color:#ffffff80}
 #mu-np .np-h{font-size:18px;font-weight:700;margin:26px 0 8px}
 @media(max-height:560px){#mu-np .np-art{width:min(100%,30vh);width:min(100%,30dvh);margin-top:10px}#mu-np .np-main{min-height:0}}
 @media(prefers-reduced-motion:reduce){#mu-np .np-sh,#mu-np .np-bg{transition:none}#mu-np .np-mqi{display:block;overflow:hidden;text-overflow:ellipsis}#mu-np .np-mqi.run{animation:none}}`;
@@ -1191,8 +1354,6 @@ function npQueue(){
 const npBar=(p,d)=>`<input class=np-bar id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} style="--p:${d>0?(p/d*100):0}%" aria-label="Posição" oninput="MU.sk(this.value,1);this.style.setProperty('--p',(this.max>0?this.value/this.max*100:0)+'%')" onchange="MU.sk(this.value)"><div class=np-tms><span id=mu-c>${tm(p)}</span><span>${tm(d)}</span></div>`;
 /* o 5º botão (o Spotify usa o temporizador) é o "repetir lista", que é o recurso equivalente que existe aqui */
 const npCtrl=(pl,sh,rp)=>`<div class=np-ctl><button class="np-cb${sh?' on':''}" onclick="MU.lc('sh')" title="Aleatório" aria-label="Aleatório">${I.shuf}</button><button class=np-cb onclick="MU.lc('pv')" title="Anterior" aria-label="Anterior">${I.prev}</button><button class=np-pp onclick="MU.lc('tg')" title="${pl?'Pausar':'Tocar'}" aria-label="${pl?'Pausar':'Tocar'}">${pl?I.pause:I.play}</button><button class=np-cb onclick="MU.lc('nx')" title="Próxima" aria-label="Próxima">${I.next}</button><button class="np-cb${rp?' on':''}" onclick="MU.lc('rp')" title="Repetir lista" aria-label="Repetir lista">${I.rep}</button></div>`;
-/* sem integração com letras: estado vazio honesto, nada inventado */
-const npLyrics=()=>`<div class=np-ly><div class=np-lh>Prévia da letra</div><p>Letra indisponível: este app ainda não tem uma fonte de letras.</p></div>`;
 
 function npBody(){
   const t=T[cur];if(!t)return'';
@@ -1202,7 +1363,7 @@ function npBody(){
 <div class=np-ti><div class=np-tt><div class=np-mq><span class=np-mqi>${esc(m.title)}</span></div><span class=np-ar>${esc(m.artist||UNK)}</span></div><button class=np-add onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plusc}</button></div>
 ${npBar(curPos(),d)}${npCtrl(pl,shuf,rep)}<div class=np-vol>${vol('mu-npv',curVol())}</div>
 <div class=np-ft>${dbi()}</div></div>
-${npLyrics()}${npQueue()}<p class=sp-s id=mu-tt style="text-align:center;margin-top:18px">${tline()}</p>`;
+${lyCard()}${npQueue()}<p class=sp-s id=mu-tt style="text-align:center;margin-top:18px">${tline()}</p>`;
 }
 /* fundo da tela cheia: degradê com a cor predominante da capa (cacheada), escurecendo até o fundo; troca com fade entre duas camadas.
    Sem cor da capa, usa o vinho escuro (matiz 346). O fundo da folha fica igual à cor de baixo, sem emenda ao rolar. */
@@ -1271,7 +1432,7 @@ function nph(v){
     if(NPO||cur<0||!T[cur]||RC)return;
     NF=document.activeElement;NPO=1;
     d.inert=false;d.setAttribute('aria-hidden','false');
-    npUpd();
+    npUpd();lyLoad();
     void d.offsetHeight;
     d.classList.add('open');
     document.body.style.overflow='hidden';
@@ -1619,6 +1780,7 @@ return{
   back(){take(RC)},
   sy:syncDev,
   dsh,dsel,nph,npa,
+  lyx(){LYX=!LYX;lyUi();npUpd()},lyr(){lyLoad(true)},lyk(i){const t=T[cur],e=t&&LY.get(key(t));if(!RC&&e&&e.sy&&e.L[i])seekTo(e.L[i].t)},lyt:lyTest,
   qp(i){RC=null;play(i,1,ctx)},
   dbg:()=>({ME,cells:Object.keys(CL.c).length,leg:Object.keys(CL.leg),tot:stGet().tot})
 };
