@@ -55,6 +55,8 @@ const I={
   devs:'<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6"/><rect x="13" y="12" width="8" height="9" rx="1.6"/><circle cx="17" cy="17.2" r="1.7"/><path d="M8 20h4"/></svg>'
 };
 I.info=sv_('M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z');
+/* ícone "+" dentro de círculo (tela Tocando agora) */
+I.plusc='<svg class="o" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>';
 
 /* ---- armazenamento local (IndexedDB) ---- */
 const dbp=new Promise((res,rej)=>{try{const r=indexedDB.open('hub-musicas',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}});
@@ -704,7 +706,7 @@ on('timeupdate',()=>{
   const rem=el.duration-el.currentTime;
   if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
   const mp=$('#mu-mp');if(mp&&el.duration>0)mp.style.width=(el.currentTime/el.duration*100)+'%';
-  if(!RC){const s=$('#mu-s'),c=$('#mu-c');if(s&&!seeking)s.value=el.currentTime;if(c&&!seeking)c.textContent=tm(el.currentTime)}
+  if(!RC){const s=$('#mu-s'),c=$('#mu-c');if(s&&!seeking){s.value=el.currentTime;if(el.duration>0)s.style.setProperty('--p',(el.currentTime/el.duration*100)+'%')}if(c&&!seeking)c.textContent=tm(el.currentTime)}
   if(Date.now()-lastB>1000)bcast();
 });
 on('ended',()=>{
@@ -1112,34 +1114,65 @@ function dsel(k,id){
 }
 /* ======================================================================
    TELA "TOCANDO AGORA" (sobe ao tocar no mini player, estilo Spotify)
+   Layout de celular: cabeçalho, capa grande, título/artista, barra fina,
+   controles, linha de aparelho e cartão "Prévia da letra" logo abaixo.
    ====================================================================== */
 const NPCSS=`#mu-np{position:fixed;inset:0;z-index:9000;visibility:hidden;pointer-events:none;transition:visibility 0s linear .35s;font-family:inherit;background:#000}
 #mu-np.open{visibility:visible;pointer-events:auto;transition:none}
 #mu-np *{box-sizing:border-box}
-#mu-np .np-sh{position:absolute;top:0;bottom:0;left:0;right:0;max-width:560px;margin:0 auto;background:#121212;color:#fff;overflow-y:auto;overscroll-behavior:contain;padding:0 20px calc(28px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);outline:0}
+#mu-np .np-sh{position:absolute;top:0;bottom:0;left:0;right:0;max-width:560px;margin:0 auto;background-color:#1b1114;color:#fff;overflow-y:auto;overscroll-behavior:contain;padding:env(safe-area-inset-top,0px) 20px calc(28px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.9,.3,1),background-color .8s ease;outline:0}
 #mu-np.open .np-sh{transform:translateY(0)}
 #mu-np .np-sh.drag{transition:none}
 #mu-np svg{width:1em;height:1em;fill:currentColor;flex:none;pointer-events:none;vertical-align:-.125em}
 #mu-np svg.o{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-#mu-np button:focus-visible{outline:2px solid #1db954;outline-offset:2px}
-#mu-np .np-gr{display:flex;justify-content:center;padding:12px 0 6px;touch-action:none;cursor:grab}
-#mu-np .np-gr i{width:40px;height:4px;border-radius:2px;background:#ffffff66}
-#mu-np .np-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-#mu-np .np-x{background:none;border:0;color:#fff;font-size:28px;padding:6px;border-radius:50%;cursor:pointer;display:inline-flex}
-#mu-np .np-c{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:2px}
-#mu-np .np-c small{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#ffffffb3}
-#mu-np .np-c b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#mu-np .np-spc{width:40px;flex:none}
-#mu-np .np-art{width:min(100%,360px,44vh);aspect-ratio:1;margin:6px auto 24px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:96px;box-shadow:0 16px 40px #0009;color:#ffffffaa}
-#mu-np .np-ti{display:flex;align-items:center;gap:4px}
-#mu-np .np-tt{flex:1;min-width:0}
-#mu-np .np-tt b{display:block;font-size:22px;font-weight:800;overflow-wrap:anywhere}
-#mu-np .np-tt span{color:#ffffffb3;font-size:14px}
-#mu-np .np-ft{display:flex;align-items:center;justify-content:flex-start;margin-top:14px}
-#mu-np .np-h{font-size:18px;font-weight:700;margin:26px 0 8px}
+#mu-np button:focus-visible,#mu-np input:focus-visible{outline:2px solid #1db954;outline-offset:2px}
 #mu-np .np-bg{position:absolute;top:0;left:0;right:0;height:100vh;height:100dvh;opacity:0;transition:opacity .8s ease;pointer-events:none}
 #mu-np .np-gr,#mu-np #mu-npb{position:relative;z-index:1}
-@media(prefers-reduced-motion:reduce){#mu-np .np-sh,#mu-np .np-bg{transition:none}}`;
+#mu-np .np-gr{display:flex;justify-content:center;padding:10px 0 4px;touch-action:none;cursor:grab}
+#mu-np .np-gr i{width:40px;height:4px;border-radius:2px;background:#ffffff55}
+/* área da primeira tela: a parte de cima ocupa a altura e deixa só o topo do cartão da letra aparecendo */
+#mu-np .np-main{display:flex;flex-direction:column;min-height:calc(100vh - 140px - env(safe-area-inset-top,0px));min-height:calc(100dvh - 140px - env(safe-area-inset-top,0px))}
+#mu-np .np-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+#mu-np .np-x{background:none;border:0;color:#fff;font-size:30px;padding:6px;border-radius:50%;cursor:pointer;display:inline-flex}
+#mu-np .np-c{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:1px}
+#mu-np .np-c small{font-size:12px;font-weight:500;color:#fff}
+#mu-np .np-c b{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mu-np .np-spc{width:42px;flex:none}
+#mu-np .np-art{width:min(100%,42vh,560px);width:min(100%,42dvh,560px);aspect-ratio:1;align-self:center;flex:none;margin:20px 0 0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:96px;box-shadow:0 12px 32px #0006;color:#ffffffaa}
+#mu-np .np-ti{display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:22px}
+#mu-np .np-tt{flex:1;min-width:0}
+#mu-np .np-mq{white-space:nowrap;overflow:hidden;font-size:24px;font-weight:800;line-height:1.25;height:1.25em}
+#mu-np .np-mqi{display:inline-block;will-change:transform}
+#mu-np .np-mqi.run{animation:np-mq var(--mqd,8s) ease-in-out infinite}
+@keyframes np-mq{0%,15%{transform:translateX(0)}45%,60%{transform:translateX(var(--mqx))}90%,100%{transform:translateX(0)}}
+#mu-np .np-ar{display:block;color:#ffffffb3;font-size:16px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mu-np .np-add{background:none;border:0;color:#fff;font-size:34px;padding:4px;border-radius:50%;cursor:pointer;display:inline-flex;flex:none}
+/* barra de progresso fina */
+#mu-np .np-bar{-webkit-appearance:none;appearance:none;display:block;width:100%;height:18px;margin:14px 0 0;background:transparent;cursor:pointer;--p:0%}
+#mu-np .np-bar::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(90deg,#fff var(--p),#ffffff40 var(--p))}
+#mu-np .np-bar::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#fff;margin-top:-4px;border:0}
+#mu-np .np-bar::-moz-range-track{height:4px;border-radius:2px;background:#ffffff40}
+#mu-np .np-bar::-moz-range-progress{height:4px;border-radius:2px;background:#fff}
+#mu-np .np-bar::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#fff;border:0}
+#mu-np .np-tms{display:flex;justify-content:space-between;font-size:12.5px;color:#ffffffb3;margin-top:2px}
+/* controles principais */
+#mu-np .np-ctl{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+#mu-np .np-cb{background:none;border:0;color:#fff;font-size:30px;padding:10px;border-radius:50%;cursor:pointer;display:inline-flex;position:relative}
+#mu-np .np-cb.on{color:#1db954}
+#mu-np .np-cb.on::after{content:'';position:absolute;bottom:0;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:#1db954}
+#mu-np .np-pp{width:64px;height:64px;border-radius:50%;background:#fff;color:#000;border:0;font-size:30px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+#mu-np .np-pp:active{transform:scale(.95)}
+#mu-np .np-ft{display:flex;align-items:center;justify-content:flex-start;margin-top:14px}
+#mu-np .np-ft .sp-dvb{color:#fff;padding-left:0}
+#mu-np .np-vol{display:none}
+@media(hover:hover) and (pointer:fine){#mu-np .np-vol{display:block}}
+/* prévia da letra */
+#mu-np .np-ly{background:var(--npc,#6e1024);border-radius:12px;padding:18px 18px 20px;margin-top:6px}
+#mu-np .np-lh{font-size:16px;font-weight:800}
+#mu-np .np-ly p{margin:12px 0 0;font-size:14px;line-height:1.5;color:#ffffffcc}
+#mu-np .np-h{font-size:18px;font-weight:700;margin:26px 0 8px}
+@media(max-height:560px){#mu-np .np-art{width:min(100%,30vh);width:min(100%,30dvh);margin-top:10px}#mu-np .np-main{min-height:0}}
+@media(prefers-reduced-motion:reduce){#mu-np .np-sh,#mu-np .np-bg{transition:none}#mu-np .np-mqi{display:block;overflow:hidden;text-overflow:ellipsis}#mu-np .np-mqi.run{animation:none}}`;
 
 function npQueue(){
   const p=ctx&&pget(ctx);
@@ -1149,30 +1182,51 @@ function npQueue(){
   if(!L.length)return h+'<p class=sp-s>'+(rep&&q.length>1?'Depois desta, a lista volta ao início.':'Esta é a última música da lista.')+'</p>';
   return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||UNK)}</p></div></div>`).join('');
 }
+/* barra de progresso fina (a parte branca acompanha --p) */
+const npBar=(p,d)=>`<input class=np-bar id=mu-s type=range min=0 max=${d} step=.1 value=${p||0} style="--p:${d>0?(p/d*100):0}%" aria-label="Posição" oninput="MU.sk(this.value,1);this.style.setProperty('--p',(this.max>0?this.value/this.max*100:0)+'%')" onchange="MU.sk(this.value)"><div class=np-tms><span id=mu-c>${tm(p)}</span><span>${tm(d)}</span></div>`;
+/* o 5º botão (o Spotify usa o temporizador) é o "repetir lista", que é o recurso equivalente que existe aqui */
+const npCtrl=(pl,sh,rp)=>`<div class=np-ctl><button class="np-cb${sh?' on':''}" onclick="MU.lc('sh')" title="Aleatório" aria-label="Aleatório">${I.shuf}</button><button class=np-cb onclick="MU.lc('pv')" title="Anterior" aria-label="Anterior">${I.prev}</button><button class=np-pp onclick="MU.lc('tg')" title="${pl?'Pausar':'Tocar'}" aria-label="${pl?'Pausar':'Tocar'}">${pl?I.pause:I.play}</button><button class=np-cb onclick="MU.lc('nx')" title="Próxima" aria-label="Próxima">${I.next}</button><button class="np-cb${rp?' on':''}" onclick="MU.lc('rp')" title="Repetir lista" aria-label="Repetir lista">${I.rep}</button></div>`;
+/* sem integração com letras: estado vazio honesto, nada inventado */
+const npLyrics=()=>`<div class=np-ly><div class=np-lh>Prévia da letra</div><p>Letra indisponível: este app ainda não tem uma fonte de letras.</p></div>`;
+
 function npBody(){
   const t=T[cur];if(!t)return'';
   const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t);
-  return`<div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
+  return`<div class=np-main><div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
 <div class=np-art style="${artSt(t)}">${artIc(t)}</div>
-<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||UNK)}</span></div><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
-${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
-<div class=np-ft>${dbi()}</div><p class=sp-s id=mu-tt style="text-align:center;margin-top:10px">${tline()}</p>${npQueue()}`;
+<div class=np-ti><div class=np-tt><div class=np-mq><span class=np-mqi>${esc(m.title)}</span></div><span class=np-ar>${esc(m.artist||UNK)}</span></div><button class=np-add onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plusc}</button></div>
+${npBar(curPos(),d)}${npCtrl(pl,shuf,rep)}<div class=np-vol>${vol('mu-npv',curVol())}</div>
+<div class=np-ft>${dbi()}</div></div>
+${npLyrics()}${npQueue()}<p class=sp-s id=mu-tt style="text-align:center;margin-top:18px">${tline()}</p>`;
 }
-/* fundo da tela cheia: gradiente com a cor predominante da capa (cacheada), escurecendo até o fundo; troca com fade entre duas camadas */
+/* fundo da tela cheia: degradê com a cor predominante da capa (cacheada), escurecendo até o fundo; troca com fade entre duas camadas.
+   Sem cor da capa, usa o vinho escuro (matiz 346). O fundo da folha fica igual à cor de baixo, sem emenda ao rolar. */
 let NBG='',NBF=0;
 const bgOf=t=>{
-  const c=meta(t).pal;
-  if(!c)return'linear-gradient(180deg,hsl(0,0%,22%) 0%,hsl(0,0%,15%) 55%,#121212 100%)';
-  const h=Math.round(c.h),sa=Math.round(Math.min(c.s,.55)*100);
-  return'linear-gradient(180deg,hsl('+h+','+sa+'%,28%) 0%,hsl('+h+','+Math.round(sa*.85)+'%,17%) 55%,#121212 100%)';
+  const c=meta(t).pal,h=c?Math.round(c.h):346,s=c?Math.round(Math.max(35,Math.min(c.s*100,70))):67;
+  return{
+    g:'linear-gradient(180deg,hsl('+h+','+s+'%,27%) 0%,hsl('+h+','+Math.round(s*.8)+'%,15%) 55%,hsl('+h+','+Math.round(s*.45)+'%,8%) 100%)',
+    end:'hsl('+h+','+Math.round(s*.45)+'%,8%)',
+    card:'hsl('+h+','+s+'%,24%)'
+  };
 };
 function npBg(){
   const t=T[cur];if(!t)return;
-  const g=bgOf(t);if(g===NBG)return;
-  const a=document.getElementById('mu-nbg'+NBF),b=document.getElementById('mu-nbg'+(1-NBF));
-  if(!a||!b)return;
-  NBG=g;NBF=1-NBF;b.style.background=g;b.style.opacity=1;a.style.opacity=0;
+  const c=bgOf(t);if(c.g===NBG)return;
+  const a=document.getElementById('mu-nbg'+NBF),b=document.getElementById('mu-nbg'+(1-NBF)),sh=document.querySelector('#mu-np .np-sh');
+  if(!a||!b||!sh)return;
+  NBG=c.g;NBF=1-NBF;b.style.background=c.g;b.style.opacity=1;a.style.opacity=0;
+  sh.style.backgroundColor=c.end;sh.style.setProperty('--npc',c.card);
 }
+/* título do player: só anima se for maior que o espaço */
+function npMq(){
+  const box=document.querySelector('#mu-np .np-mq'),it=box&&box.firstElementChild;
+  if(!box||!it)return;
+  const dist=it.scrollWidth-box.clientWidth,red=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(dist>2&&!red){it.style.setProperty('--mqx',-(dist+12)+'px');it.style.setProperty('--mqd',Math.max(7,dist/8)+'s');it.classList.add('run')}
+  else it.classList.remove('run');
+}
+addEventListener('resize',()=>{if(NPO)requestAnimationFrame(npMq)});
 function npUpd(){
   if(!NPO)return;
   if(RC||cur<0||!T[cur]){nph(0);return}
@@ -1181,6 +1235,7 @@ function npUpd(){
   const a=document.activeElement,L=[...b.querySelectorAll('button,input,[role=button]')],fi=a&&b.contains(a)?L.indexOf(a):-1;
   npBg();
   b.innerHTML=npBody();
+  npMq();
   if(fi>=0){const n=[...b.querySelectorAll('button,input,[role=button]')][fi];if(n)n.focus()}
 }
 function npMount(){
