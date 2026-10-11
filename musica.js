@@ -132,6 +132,48 @@ const pauseNow=()=>el.pause();
 const seekTo=v=>{el.currentTime=+v;msPos()};
 const setVol=v=>{el.volume=Math.max(0,Math.min(1,+v))};
 
+/* ---- estatísticas de escuta (só neste aparelho, guardadas em localStorage) ----
+   O tempo vem da posição real da música (não de um relógio), então conta certo mesmo com a tela apagada
+   ou o app em segundo plano. Uma "reprodução" conta quando você ouve 30 s (ou metade, nas músicas curtas).
+   O cantor é lido do nome do arquivo no padrão "Cantor - Música". */
+let STT={tot:0,d:{},tr:{},pl:{},ar:{}};
+try{const s=JSON.parse(localStorage.getItem('hub_mstats'));if(s&&typeof s=='object')STT=Object.assign(STT,s)}catch(e){}
+let stPos=-1,stCur=-2,stAcc=0,stCnt=0,stDirty=0;
+const stDay=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const saveST=()=>{if(!stDirty)return;stDirty=0;try{localStorage.setItem('hub_mstats',JSON.stringify(STT))}catch(e){}};
+const artOf=name=>{const m=nm(name).split(/\s+[-–—]\s+/);return m.length>1?m[0].trim():''};
+function stTick(){
+  if(cur<0||!T[cur]||el.paused){stPos=-1;return}
+  const p=el.currentTime;
+  if(stCur!==cur){stCur=cur;stAcc=0;stCnt=0;stPos=-1}
+  const dt=stPos<0?0:p-stPos;stPos=p;
+  if(dt<=0||dt>2)return;
+  const t=T[cur],name=nm(t.name),dk=stDay();
+  STT.tot+=dt;STT.d[dk]=(STT.d[dk]||0)+dt;
+  const r=STT.tr[name]||(STT.tr[name]={s:0,p:0});r.s+=dt;
+  const a=artOf(t.name);if(a)STT.ar[a]=(STT.ar[a]||0)+dt;
+  const pl=ctx!=null?pget(ctx):null;if(pl)STT.pl[pl.id]=(STT.pl[pl.id]||0)+dt;
+  stAcc+=dt;if(!stCnt&&stAcc>=Math.min(30,(curDur()||60)/2)){stCnt=1;r.p++}
+  stDirty=1;
+}
+setInterval(saveST,10000);
+addEventListener('pagehide',saveST);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)saveST()});
+const fT=s=>{s=Math.round(s);return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h '+String(Math.floor(s%3600/60)).padStart(2,'0')+' min'};
+const topOf=(o,f)=>Object.entries(o).filter(e=>f?f(e):1).sort((a,b)=>(b[1].p-a[1].p)||((b[1].s!=null?b[1].s:b[1])-(a[1].s!=null?a[1].s:a[1])))[0];
+function statsCard(){
+  if(STT.tot<5)return`<div class=st-h>Sua escuta</div><div class=st-c><div class=st-s>Ouça algumas músicas para ver aqui o seu tempo de escuta, a música, a playlist e o cantor mais ouvidos.</div></div>`;
+  const now=new Date();let w=0;for(let i=0;i<7;i++){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);w+=STT.d[d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')]||0}
+  const tt=topOf(STT.tr,e=>e[1].s>=5),ta=Object.entries(STT.ar).sort((a,b)=>b[1]-a[1])[0],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
+  const card=(l,v,s)=>`<div class=st-c><div class=st-l>${l}</div><div class=st-v>${esc(v)}</div><div class=st-s>${s}</div></div>`;
+  return`<div class=st-h>Sua escuta</div>
+<div class="st-c st-t"><div class=st-l>Tempo ouvindo música</div><div class=st-big>${fT(STT.tot)}</div><div class=st-s>no total, neste aparelho</div></div>
+<div class=st-m><div><div class=st-l>Hoje</div><b>${fT(STT.d[stDay()]||0)}</b></div><div><div class=st-l>Últimos 7 dias</div><b>${fT(w)}</b></div></div>
+${tt?card('Música mais escutada',tt[0],(tt[1].p?tt[1].p+(tt[1].p==1?' reprodução':' reproduções')+' · ':'')+fT(tt[1].s)):''}
+${tp?card('Playlist mais escutada',pget(tp[0]).name,fT(tp[1])+' ouvidos'):''}
+${ta?card('Cantor mais escutado',ta[0],fT(ta[1])+' ouvidos'):`<div class=st-c><div class=st-l>Cantor mais escutado</div><div class=st-s style="margin-top:6px">Para mostrar o cantor, nomeie os arquivos como "Cantor - Música" (use <b>Renomear</b> na biblioteca).</div></div>`}`;
+}
+
 /* ---- reprodução local ---- */
 const playEl=()=>el.play().catch(e=>{if(e&&e.name=='NotAllowedError'){blocked=1;bcast()}});
 function play(i,auto=1,c,back,pos){
@@ -202,8 +244,10 @@ function onAct(c){
 on('play',()=>{blocked=0;myPlayAt=Date.now();act();keep(1);draw();bcast()});
 on('pause',()=>{keep(0);draw();bcast()});
 on('loadedmetadata',()=>{draw();bcast()});
+on('ended',()=>{stAcc=0;stCnt=0;stPos=-1});
 on('volumechange',()=>sched());
 on('timeupdate',()=>{
+  stTick();
   const rem=el.duration-el.currentTime;
   if(isFinite(rem)&&!el.paused){if(rem<20)prep();if(pre&&rem<0.35)handoff()}
   const mp=$('#mu-mp');if(mp&&el.duration>0)mp.style.width=(el.currentTime/el.duration*100)+'%';
@@ -826,6 +870,17 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-dvb.on{color:#1db954}
 .sp-dvb svg{font-size:20px}
 .sp-dvb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-h{margin:18px 8px 10px;font-size:18px;font-weight:800}
+.st-c{background:#1a1a1a;border-radius:12px;padding:14px 16px;margin:0 0 10px}
+.st-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#b3b3b3}
+.st-v{font-size:20px;font-weight:800;margin:6px 0 2px;overflow-wrap:anywhere}
+.st-s{font-size:13px;color:#b3b3b3}
+.st-t{background:#1db954;color:#000}
+.st-t .st-l,.st-t .st-s{color:rgba(0,0,0,.7)}
+.st-big{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:4px 0 2px}
+.st-m{display:flex;gap:10px;margin:0 0 10px}
+.st-m>div{flex:1;min-width:0;background:#1a1a1a;border-radius:12px;padding:12px 14px}
+.st-m b{display:block;font-size:17px;font-weight:800;margin-top:4px}
 </style>`;
 
 /* ---- telas ---- */
@@ -932,8 +987,9 @@ function menuView(){
   const n=(typeof S!='undefined'&&S.name)||'Você',ini=esc(String(n).trim().charAt(0).toUpperCase()||'?');
   const L=PG.filter(p=>p[0]!='mus');
   return CSS+`<div class=sp><div class=sp-top><button class="sp-ib" onclick="MU.menu(0)" title="Voltar" aria-label="Voltar">${I.back}</button><div class=sp-t style="flex:1;margin-left:4px">Configurações</div></div>
-<div class=sp-prof><div class=sp-av>${ini}</div><div><div class=sp-ti>${esc(n)}</div><p class=sp-s>${esc(APP)}</p></div></div>
-<div class=sp-s style="margin:0 8px 6px">Ir para</div>
+<div class=sp-prof>${typeof S!='undefined'&&S.photo?`<div class=sp-av style="background:#222 url('${esc(S.photo)}') center/cover no-repeat" role=img aria-label="Foto de perfil"></div>`:`<div class=sp-av>${ini}</div>`}<div><div class=sp-ti>${esc(n)}</div><p class=sp-s>${esc(APP)}</p></div></div>
+${statsCard()}
+<div class=sp-s style="margin:18px 8px 6px">Ir para</div>
 ${L.map(p=>`<div class=sp-mi onclick="MU.goto('${p[0]}')"><span>${esc(p[2])}</span>${I.chev}</div>`).join('')}</div>`;
 }
 const view=()=>{
