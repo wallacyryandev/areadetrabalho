@@ -3,9 +3,10 @@
    + troca de músicas entre aparelhos conectados e controle remoto (estilo Spotify Connect).
    Usa a conexão direta do "Conectar dispositivo" (SY). Carregar DEPOIS de index.js.
 
-   NOVO nesta versão (informações reais da reprodução):
+   Informações reais da reprodução:
    - Artista, álbum e capa lidos das tags ID3v2.3/2.4 do próprio MP3 (nada é inventado).
-     Sem tag: usa o padrão "Cantor - Música" do nome do arquivo; por último o nome do app.
+     Prioridade dos artistas: 1) tag do arquivo  2) padrão "Cantor - Música" do nome do arquivo  3) "Artista desconhecido".
+     Título, artistas, participações (feat.) e produtor/DJ são campos separados; o título nunca vira artista.
    - Tempo no formato 01:24 / 03:45 e tempo de escuta da sessão atual na tela "Tocando agora".
    - Media Session (tela de bloqueio) com título, artista, capa e nome da playlist.
    Limitações: só MP3 com ID3v2.3/2.4 tem tags lidas (M4A/FLAC/OGG/ID3v2.2 usam o nome do arquivo). */
@@ -20,7 +21,7 @@ let DSO=0,dsF=null,XS={},XE={};
 let NPO=0,NF=null;
 
 /* ---- identidade do app no cartão de mídia do sistema ---- */
-const APP='Hub Pessoal';
+const APP='Hub Pessoal',UNK='Artista desconhecido';
 const ico=f=>{try{return new URL(f,location.href).href}catch(e){return f}};
 const ART=[{src:ico('icon-192.png'),sizes:'192x192',type:'image/png'},{src:ico('icon-512.png'),sizes:'512x512',type:'image/png'}];
 
@@ -94,7 +95,7 @@ const msMeta=i=>{
   if(!('mediaSession' in navigator)||!T[i])return;
   try{
     const m=meta(T[i]),p=ctx&&pget(ctx);
-    navigator.mediaSession.metadata=new MediaMetadata({title:m.title,artist:m.artist||APP,album:p?p.name:(m.album||APP),artwork:m.cover?[{src:m.cover,sizes:'512x512'}]:ART});
+    navigator.mediaSession.metadata=new MediaMetadata({title:m.title,artist:m.artist||UNK,album:p?p.name:(m.album||APP),artwork:m.cover?[{src:m.cover,sizes:'512x512'}]:ART});
   }catch(e){}
 };
 const msPos=()=>{
@@ -135,34 +136,183 @@ const pauseNow=()=>el.pause();
 const seekTo=v=>{el.currentTime=+v;msPos()};
 const setVol=v=>{el.volume=Math.max(0,Math.min(1,+v))};
 
+/* ======================================================================
+   IDENTIFICAÇÃO DE ARTISTAS
+   Campos separados por faixa: título, artistas, participações (feat.), produtor/DJ.
+   O título nunca é usado como artista. Sem informação segura => "Artista desconhecido".
+   ====================================================================== */
+/* chave de comparação de nomes (sem acento, minúsculas, espaços únicos) */
+const ak=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').replace(/[.\s]+$/,'').trim();
+/* divide uma lista de nomes. Só divide quando todos os pedaços parecem nomes (evita quebrar "AC/DC", "Tyler, The Creator", "MC X Brasil") */
+const spl=(L,re,m)=>L.flatMap(p=>{const q=p.split(re).map(x=>x.trim()).filter(Boolean);return q.length>1&&q.every(x=>x.length>=m)?q:[p]});
+const splitNames=s=>{
+  let L=[String(s||'').trim()];
+  L=spl(L,/\s*;\s*/,1);
+  L=spl(L,/\s+x\s+/i,3);
+  L=spl(L,/\s*,(?!\s*the\s)\s*/i,2);
+  L=spl(L,/\s+&(?!\s*the\s)\s+/i,2);
+  L=spl(L,/\//,3);
+  return L.map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+};
+const uniq=L=>{const s=new Set(),o=[];L.forEach(n=>{const k=ak(n);if(k&&!s.has(k)){s.add(k);o.push(n)}});return o};
+/* marcadores de participação: feat. / ft. / featuring / part. / participação (especial) (de) */
+const FW='(?:(?:feat|ft)\\b\\.?|featuring\\b|part\\.|participa[cç][aã]o\\b(?:\\s+especial)?(?:\\s+de)?)';
+const RA=new RegExp('\\s*[\\(\\[]?\\s*\\b'+FW+'\\s*','i');
+const RTb=new RegExp('\\s*[\\(\\[]\\s*'+FW+'\\s*([^\\)\\]]+)[\\)\\]]','ig');
+const RTe=/\s+(?:(?:feat|ft)\b\.?|featuring\b)\s+(.+)$/i;
+/* campo de artista ("MC Kevin feat. MC PH") => {main:[...],feat:[...]} */
+function parseArt(s){
+  s=String(s||'').trim();
+  const P=s.split(new RegExp(RA.source,'ig'));
+  const main=uniq(splitNames(P[0]));
+  const feat=uniq(P.slice(1).flatMap(x=>splitNames(x.replace(/[\)\]]+\s*$/,''))));
+  return{main,feat:feat.filter(n=>!main.some(m=>ak(m)==ak(n)))};
+}
+/* tira "(prod. DJ X)" do texto; devolve o texto limpo e os produtores */
+function xProd(t){
+  const P=[];
+  t=String(t||'').replace(/\s*[\(\[]\s*prod(?:uced)?\b\.?\s*(?:by\b|por\b)?\s*:?\s*([^\)\]]+)[\)\]]/ig,(m,x)=>{P.push(...splitNames(x));return''});
+  t=t.replace(/\s+prod(?:uced)?\b\.?\s*(?:by\b|por\b)?\s*:?\s+(.+)$/i,(m,x)=>{P.push(...splitNames(x));return''});
+  return{t:t.trim(),p:P};
+}
+/* tira "(feat. X)" do título; devolve o título limpo e os convidados */
+function xFeat(t){
+  const F=[];
+  t=String(t||'').replace(RTb,(m,x)=>{F.push(...splitNames(x));return''});
+  t=t.replace(RTe,(m,x)=>{F.push(...splitNames(x));return''});
+  return{t:t.replace(/\s+/g,' ').trim(),f:F};
+}
+/* nome do arquivo (sem extensão), padrão "Cantor - Música" */
+function parseName(stem){
+  stem=String(stem||'').trim();
+  const pr=xProd(stem),s=pr.t,m=s.match(/^(.*?)\s+[-–—]\s+(.+)$/);
+  const left=m?m[1].trim():'',raw=m?m[2].trim():s,tf=xFeat(raw),a=left?parseArt(left):{main:[],feat:[]};
+  const feat=uniq(a.feat.concat(tf.f));
+  return{title:tf.t||raw,left,raw,main:a.main,feat:feat.filter(n=>!a.main.some(x=>ak(x)==ak(n))),prod:uniq(pr.p)};
+}
+const disp=(M,F)=>M.length?M.join(', ')+(F.length?' feat. '+F.join(', '):''):F.join(', ');
+const artOf=stem=>{const f=parseName(stem);return disp(f.main,f.feat)};
+const crd=m=>uniq(m.artists.concat(m.feats));
+/* monta os campos da faixa a partir das tags (m.tag) e do nome do arquivo.
+   Prioridade: 1) tag do arquivo  2) nome do arquivo  3) desconhecido */
+function build(m,name){
+  const f=parseName(nm(name)),g=m.tag||{};
+  const gt=g.title?String(g.title).trim():'',gp=gt?xProd(gt):{t:'',p:[]},gx=gt?xFeat(gp.t):{t:'',f:[]},gk=ak(gx.t);
+  let title=f.title,main=[],feat=[],src='';
+  /* arquivo no formato "Música - Cantor": a tag de título confirma que o lado esquerdo é o título */
+  const swap=!!(f.left&&gk&&ak(f.left)==gk&&ak(f.raw)!=gk);
+  if(swap)title=xFeat(f.left).t||f.left;
+  const ta=g.artist?parseArt(g.artist):null;
+  if(ta&&ta.main.length+ta.feat.length){
+    main=ta.main;feat=ta.feat.concat(f.feat,gx.f);src='tag';
+  }else if(swap){
+    const r=parseArt(f.raw);main=r.main;feat=r.feat.concat(gx.f);src='name';
+  }else if(f.left){
+    main=f.main;feat=f.feat.concat(gx.f);src='name';
+  }else feat=f.feat.concat(gx.f);
+  let prod=uniq(f.prod.concat(g.prod||[],gp.p));
+  if(src!='tag'){
+    /* só pelo nome do arquivo: "DJ X" junto de outros artistas é tratado como DJ/produtor, não como cantor */
+    const dj=n=>/^dj\s/i.test(n);
+    if(main.some(dj)&&main.some(n=>!dj(n))){prod=uniq(prod.concat(main.filter(dj)));main=main.filter(n=>!dj(n))}
+    const pk=new Set(prod.map(ak));main=main.filter(n=>!pk.has(ak(n)));feat=feat.filter(n=>!pk.has(ak(n)));
+  }
+  /* o título nunca vira artista (exceto com confirmação explícita: artista do álbum igual) */
+  const tk=ak(title),conf=g.albumArtist&&parseArt(g.albumArtist).main.some(n=>ak(n)==tk);
+  if(!conf){main=main.filter(n=>ak(n)!=tk);feat=feat.filter(n=>ak(n)!=tk)}
+  feat=uniq(feat).filter(n=>!main.some(x=>ak(x)==ak(n)));
+  m.title=title;m.artists=main;m.feats=feat;m.prod=prod;m.src=(main.length||feat.length)?src||'name':'';
+  m.album=g.album||'';m.artist=disp(main,feat);
+}
+
 /* ---- estatísticas de escuta (só neste aparelho, guardadas em localStorage) ----
    O tempo vem da posição real da música (não de um relógio), então conta certo mesmo com a tela apagada
    ou o app em segundo plano. Uma "reprodução" conta quando você ouve 30 s (ou metade, nas músicas curtas).
-   O cantor é lido do nome do arquivo no padrão "Cantor - Música". */
-let STT={tot:0,d:{},tr:{},pl:{},ar:{}};
+   Tempo geral: cada intervalo ouvido conta UMA vez. Tempo por artista: cada artista da faixa (inclusive
+   participações) recebe o intervalo inteiro, em STT.a2 (total) e STT.ad (por dia).
+   STT.ar (formato antigo, "cantor" lido do nome do arquivo) é preservado intacto; é migrado uma vez para STT.a2. */
+let STT={tot:0,d:{},tr:{},pl:{},ar:{},a2:{},ad:{},aq:{}};
 try{const s=JSON.parse(localStorage.getItem('hub_mstats'));if(s&&typeof s=='object')STT=Object.assign(STT,s)}catch(e){}
+['d','tr','pl','ar','a2','ad','aq'].forEach(k=>{if(!STT[k]||typeof STT[k]!='object')STT[k]={}});
 let stPos=-1,stCur=-2,stAcc=0,stCnt=0,stDirty=0;
 const stDay=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const saveST=()=>{if(!stDirty)return;stDirty=0;try{localStorage.setItem('hub_mstats',JSON.stringify(STT))}catch(e){}};
-const artOf=name=>{const m=nm(name).split(/\s+[-–—]\s+/);return m.length>1?m[0].trim():''};
+/* o histórico por artista guarda só os últimos 120 dias */
+(()=>{const c=new Date();c.setDate(c.getDate()-120);const ck=c.getFullYear()+'-'+String(c.getMonth()+1).padStart(2,'0')+'-'+String(c.getDate()).padStart(2,'0');Object.keys(STT.ad).forEach(k=>{if(k<ck)delete STT.ad[k]})})();
+/* credita o intervalo a cada artista da faixa */
+function creditA(m,dt,dk){
+  crd(m).forEach(n=>{
+    const k=ak(n),e=STT.a2[k]||(STT.a2[k]={n,s:0});e.s+=dt;
+    const d=STT.ad[dk]||(STT.ad[dk]={});d[k]=(d[k]||0)+dt;
+  });
+  stDirty=1;
+}
+/* enquanto as tags da faixa ainda não foram lidas, o tempo fica pendente (evita creditar um palpite do nome do arquivo) */
+function flushPend(m){
+  const p=m.pend;m.pend=null;if(!p)return;
+  Object.keys(p).forEach(dk=>creditA(m,p[dk],dk));
+}
+/* migra o formato antigo uma única vez, sem apagar nada.
+   Lê as tags de todas as faixas (só o cabeçalho ID3) para saber quais "cantores" antigos eram, na verdade, títulos de música. */
+let migRun=0;
+async function migStats(){
+  if(STT.mig||migRun||!T.length)return;
+  migRun=1;
+  try{
+    const tt=new Set(),ar=new Set();
+    for(const t of T){
+      const f=parseName(nm(t.name));tt.add(ak(f.title));tt.add(ak(nm(t.name)));
+      let g=null;try{g=await readTags(t.blob)}catch(e){}
+      if(g){
+        if(g.title)tt.add(ak(xFeat(xProd(g.title).t).t));
+        if(g.artist){const a=parseArt(g.artist);a.main.concat(a.feat).forEach(n=>ar.add(ak(n)))}
+      }else f.main.concat(f.feat).forEach(n=>ar.add(ak(n)));  /* sem tag: só o nome do arquivo, que vale como artista */
+    }
+    Object.entries(STT.ar||{}).forEach(([n,s])=>{
+      if(!(s>0))return;
+      const k=ak(n);
+      /* o "cantor" antigo é o título de uma música da biblioteca e nenhuma tag o confirma como artista: quarentena (aq), preservado */
+      if(tt.has(k)&&!ar.has(k)){STT.aq[n]=(STT.aq[n]||0)+s;return}
+      const p=parseArt(n);
+      uniq(p.main.concat(p.feat)).forEach(x=>{const kk=ak(x),e=STT.a2[kk]||(STT.a2[kk]={n:x,s:0});e.s+=s});
+    });
+    STT.mig=1;stDirty=1;saveST();
+  }finally{migRun=0}
+}
 
 /* ---- metadados reais da faixa (tags ID3 do MP3) ---- */
 let SESS=0; /* segundos ouvidos desde que o app foi aberto (zera ao reabrir) */
 async function readTags(blob){ /* só ID3v2.3/2.4 (MP3) */
   const h=new Uint8Array(await blob.slice(0,10).arrayBuffer());
-  if(h[0]!=73||h[1]!=68||h[2]!=51||h[3]<3||(h[5]&64))return null;
+  if(h[0]!=73||h[1]!=68||h[2]!=51||h[3]<3)return null;
   const ver=h[3],sz=((h[6]&127)<<21)|((h[7]&127)<<14)|((h[8]&127)<<7)|(h[9]&127);
   const u=new Uint8Array(await blob.slice(10,10+Math.min(sz,4194304)).arrayBuffer()),dv=new DataView(u.buffer);
-  const dec=(a,e)=>{try{return new TextDecoder(['iso-8859-1','utf-16le','utf-16be','utf-8'][e]||'utf-8').decode(a).replace(/\0+$/,'').replace(/\0/g,', ').trim()}catch(x){return''}};
-  const o={};let p=0;
+  const dec=(a,e)=>{try{
+    let c=['iso-8859-1','utf-16le','utf-16be','utf-8'][e]||'utf-8';
+    if(e==1&&a.length>1&&a[0]==254&&a[1]==255)c='utf-16be';
+    return new TextDecoder(c).decode(a).replace(/\uFEFF/g,'');
+  }catch(x){return''}};
+  /* valores múltiplos vêm separados por \0 */
+  const txt=(a,e)=>dec(a,e).split('\0').map(x=>x.trim()).filter(Boolean);
+  const o={prod:[]};let p=0;
+  if(h[5]&64){ /* cabeçalho estendido: pula */
+    const es=ver==4?((u[0]&127)<<21)|((u[1]&127)<<14)|((u[2]&127)<<7)|(u[3]&127):dv.getUint32(0)+4;
+    p=Math.min(es,u.length);
+  }
   while(p+10<=u.length){
     const id=String.fromCharCode(u[p],u[p+1],u[p+2],u[p+3]);
     if(!/^[A-Z0-9]{4}$/.test(id))break;
     const fs=ver==4?((u[p+4]&127)<<21)|((u[p+5]&127)<<14)|((u[p+6]&127)<<7)|(u[p+7]&127):dv.getUint32(p+4);
     if(!fs||p+10+fs>u.length)break;
     const f=u.subarray(p+10,p+10+fs),e=f[0];
-    if(id=='TPE1')o.artist=dec(f.subarray(1),e);
-    else if(id=='TALB')o.album=dec(f.subarray(1),e);
+    if(id=='TIT2')o.title=txt(f.subarray(1),e)[0]||'';
+    else if(id=='TPE1')o.artist=txt(f.subarray(1),e).join(';');
+    else if(id=='TPE2')o.albumArtist=txt(f.subarray(1),e).join(';');
+    else if(id=='TALB')o.album=txt(f.subarray(1),e)[0]||'';
+    else if(id=='TIPL'||id=='IPLS'){ /* pares função/pessoa: só produtor, DJ e mixagem */
+      const L=txt(f.subarray(1),e);
+      for(let i=0;i+1<L.length;i+=2)if(/produc|dj|mix/i.test(L[i]))o.prod.push(...splitNames(L[i+1]));
+    }
     else if(id=='APIC'&&!o.pic){
       let i=1;while(i<f.length&&f[i])i++;
       const mime=dec(f.subarray(1,i),0);i+=2;
@@ -207,25 +357,26 @@ function palette(blob){
 }
 function meta(t){
   const k=key(t);let m=MC.get(k);if(m)return m;
-  const a=artOf(t.name),n=nm(t.name);
-  m={title:a?n.replace(/^.*?\s+[-–—]\s+/,''):n,artist:a,album:'',cover:'',pal:undefined};
+  m={title:'',artist:'',artists:[],feats:[],prod:[],album:'',cover:'',pal:undefined,src:'',tag:null,rd:0,pend:null};
+  build(m,t.name);
   MC.set(k,m);
   readTags(t.blob).then(async o=>{
     let ch=0;
     if(o){
-      if(o.artist&&!m.artist){m.artist=o.artist;ch=1}
-      if(o.album){m.album=o.album;ch=1}
-      if(o.pic&&o.pic.size>0){m.cover=URL.createObjectURL(o.pic);ch=1;m.pal=await palette(o.pic)}
+      m.tag=o;build(m,t.name);ch=1;
+      m.rd=1;flushPend(m);
+      if(o.pic&&o.pic.size>0){m.cover=URL.createObjectURL(o.pic);m.pal=await palette(o.pic)}
     }
     if(m.pal===undefined)m.pal=null;
+    if(!m.rd){m.rd=1;flushPend(m)}
     if(cur>=0&&T[cur]&&MC.get(key(T[cur]))===m){msMeta(cur);if(NPO)npBg()}
     if(ch)covDraw();
-  }).catch(()=>{if(m.pal===undefined)m.pal=null});
+  }).catch(()=>{if(m.pal===undefined)m.pal=null;if(!m.rd){m.rd=1;flushPend(m)}});
   return m;
 }
 const artSt=t=>{const m=meta(t);return m.cover?'background:#222 url('+m.cover+') center/cover no-repeat':'background:#2a2a2a;color:#ffffff55'};
 const artIc=t=>meta(t).cover?'':I.note;
-/* capa da playlist: foto escolhida, se houver; senão grade 2x2 com as 4 primeiras músicas */
+/* capa da playlist: foto escolhida, se houver; senão grade 2x2 com as 4 primeiras músicas (mesma capa usada no player e na lista) */
 const plcv=(p,st,at)=>{
   if(p.img)return'<div class=sp-cv style="'+plSt(p)+';'+(st||'')+'" '+(at||'')+'></div>';
   const L=p.keys.map(tIdx).filter(i=>i>=0).slice(0,4);let c='';
@@ -243,7 +394,9 @@ function stTick(){
   const t=T[cur],name=nm(t.name),dk=stDay();
   STT.tot+=dt;SESS+=dt;STT.d[dk]=(STT.d[dk]||0)+dt;
   const r=STT.tr[name]||(STT.tr[name]={s:0,p:0});r.s+=dt;
-  const a=meta(t).artist||artOf(t.name);if(a)STT.ar[a]=(STT.ar[a]||0)+dt;
+  /* cada artista da faixa (inclusive participações) recebe o intervalo; o total geral acima conta uma vez só */
+  const m=meta(t);
+  if(m.rd)creditA(m,dt,dk);else{m.pend=m.pend||{};m.pend[dk]=(m.pend[dk]||0)+dt}
   const pl=ctx!=null?pget(ctx):null;if(pl)STT.pl[pl.id]=(STT.pl[pl.id]||0)+dt;
   stAcc+=dt;if(!stCnt&&stAcc>=Math.min(30,(curDur()||60)/2)){stCnt=1;r.p++}
   stDirty=1;
@@ -267,7 +420,7 @@ function statsCard(){
   for(let i=6;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);wk.push({l:d.toLocaleDateString('pt-BR',{weekday:'narrow'}).toUpperCase(),v:STT.d[dkey(d)]||0})}
   const w=wk.reduce((a,x)=>a+x.v,0),mx=Math.max(...wk.map(x=>x.v),1),td=STT.d[stDay()]||0;
   const tr=Object.entries(STT.tr).filter(e=>e[1].s>=5).sort((a,b)=>(b[1].p-a[1].p)||(b[1].s-a[1].s)),tt=tr[0];
-  const ta=Object.entries(STT.ar).sort((a,b)=>b[1]-a[1])[0],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
+  const taE=Object.entries(STT.a2).filter(e=>e[1]&&e[1].s>=1).sort((a,b)=>b[1].s-a[1].s)[0],ta=taE&&[taE[1].n,taE[1].s],tp=Object.entries(STT.pl).filter(e=>pget(e[0])).sort((a,b)=>b[1]-a[1])[0];
   const tk=tt&&tByName(tt[0]),tc=tint(tk);
   const secs=[['st-hero','Resumo']];if(tt)secs.push(['st-mus','Música']);if(tp)secs.push(['st-pl','Playlist']);if(ta)secs.push(['st-ar','Artista']);if(tr.length>1)secs.push(['st-top','Mais ouvidas']);
   let h=`<div class=st-wrap><div class=st-hero id=st-hero style="background:${tintBg(tc)}"><h2 class=st-ttl>Sua escuta</h2><p class=st-per>${per}</p>
@@ -276,7 +429,7 @@ function statsCard(){
 <div class=st-wk role=img aria-label="Tempo ouvido nos últimos 7 dias">${wk.map((x,i)=>`<div class="${i==6?'on':''}"><i style="height:${Math.max(3,Math.round(x.v/mx*56))}px"></i><span>${x.l}</span></div>`).join('')}</div></div>
 <div class=st-nav>${secs.map(x=>`<button class=sp-chip onclick="MU.stgo('${x[0]}')">${x[1]}</button>`).join('')}</div>`;
   if(tt){
-    const t=tk,m=t?meta(t):null,title=m?m.title:tt[0].replace(/^.*?\s+[-–—]\s+/,''),art=m?m.artist:artOf(tt[0]);
+    const t=tk,m=t?meta(t):null,title=m?m.title:parseName(tt[0]).title,art=m?m.artist:artOf(tt[0]);
     h+=`<section class="st-sec" id=st-mus><div class=st-eye>Música mais escutada</div><div class="st-feat st-lg" style="background:${tintBg(tc,'135deg')}"><div class=st-art style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-tx><div class=st-nm>${esc(title)}</div>${art?`<div class=st-sub>${esc(art)}</div>`:''}<div class=st-meta><span><b>${fT(tt[1].s)}</b> ouvidos</span>${tt[1].p?`<span><b>${tt[1].p}</b> ${tt[1].p==1?'reprodução':'reproduções'}</span>`:''}</div></div></div></section>`;
   }
   let two='';
@@ -285,14 +438,17 @@ function statsCard(){
     two+=`<section class=st-sec id=st-pl><div class=st-eye>Playlist mais escutada</div><div class=st-feat style="background:${tintBg(pc,'135deg')}">${plcv(pl,'width:var(--ca);height:var(--ca);font-size:34px;cursor:default;border-radius:8px')}<div class=st-tx><div class=st-nm>${esc(pl.name)}</div><div class=st-sub>${n} ${n==1?'música':'músicas'}</div><div class=st-meta><span><b>${fT(tp[1])}</b> ouvidos</span></div></div></div></section>`;
   }
   if(ta){
-    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${esc(ta[0].trim().charAt(0).toUpperCase()||'?')}</div><div class=st-tx><div class=st-nm>${esc(ta[0])}</div><div class=st-meta><span><b>${fT(ta[1])}</b> ouvidos</span></div></div></div></section>`;
+    /* hoje e últimos 7 dias deste artista (dados por dia guardados a partir desta versão) */
+    const ak0=taE[0],atd=(STT.ad[stDay()]||{})[ak0]||0;let aw=0;
+    for(let i=0;i<7;i++)aw+=(STT.ad[dkey(new Date(now.getFullYear(),now.getMonth(),now.getDate()-i))]||{})[ak0]||0;
+    two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${esc(ta[0].trim().charAt(0).toUpperCase()||'?')}</div><div class=st-tx><div class=st-nm>${esc(ta[0])}</div><div class=st-meta><span><b>${fT(ta[1])}</b> ouvidos</span>${atd>=1?`<span>hoje <b>${fT(atd)}</b></span>`:''}${aw>=1?`<span>7 dias <b>${fT(aw)}</b></span>`:''}</div></div></div></section>`;
   }else{
     two+=`<section class=st-sec id=st-ar><div class=st-eye>Artista mais escutado</div><div class=st-feat style="background:${tintBg(null,'135deg')}"><div class=st-av aria-hidden=true>${I.note}</div><div class=st-tx><div class=st-sub>Para mostrar o artista, use MP3 com tag de artista ou nomeie os arquivos como "Cantor - Música" (use <b>Renomear</b> na biblioteca).</div></div></div></section>`;
   }
   if(two)h+=`<div class=st-two>${two}</div>`;
   if(tr.length>1){
     h+=`<section class=st-sec id=st-top><div class=st-eye>Mais ouvidas</div><div class=st-list>${tr.slice(0,5).map((e,i)=>{
-      const t=tByName(e[0]),m=t?meta(t):null,title=m?m.title:e[0].replace(/^.*?\s+[-–—]\s+/,''),art=m?m.artist:artOf(e[0]);
+      const t=tByName(e[0]),m=t?meta(t):null,title=m?m.title:parseName(e[0]).title,art=m?m.artist:artOf(e[0]);
       return`<div class=st-row><span class=st-n>${i+1}</span><div class=st-cv style="${t?artSt(t):'background:#2a2a2a;color:#ffffff55'}">${t?artIc(t):I.note}</div><div class=st-i><div class=st-rt>${esc(title)}</div>${art?`<div class=st-ra>${esc(art)}</div>`:''}</div><span class=st-rs>${fT(e[1].s)}</span></div>`}).join('')}</div></section>`;
   }
   return h+'</div>';
@@ -368,6 +524,7 @@ function onAct(c){
 on('play',()=>{blocked=0;myPlayAt=Date.now();act();keep(1);draw();bcast()});
 on('pause',()=>{keep(0);draw();bcast()});
 on('loadedmetadata',()=>{draw();bcast()});
+on('seeking',()=>{stPos=-1}); /* pular para outro ponto não conta como tempo ouvido */
 on('ended',()=>{stAcc=0;stCnt=0;stPos=-1});
 on('volumechange',()=>sched());
 on('timeupdate',()=>{
@@ -404,7 +561,7 @@ async function add(files){
     T.push(r);KM=null;
   }
   if(cur<0&&T.length)play(0,0);else draw();
-  bls();
+  migStats();bls();
 }
 async function del(i){
   if(!confirm('Remover "'+nm(T[i].name)+'" deste aparelho?'))return;
@@ -422,12 +579,12 @@ async function applyRen(i,name,remote){
   const old=key(t),rec={id:t.id,name,size:t.size,blob:t.blob};
   try{await tx('readwrite',s=>s.put(rec))}catch(e){say('Não foi possível renomear.');return}
   const had=seen.delete(old);
-  /* os metadados (capa/artista) migram para a nova chave; o título é recalculado pelo novo nome */
+  /* os metadados (capa/tags) migram para a nova chave; título e artistas são recalculados pelo novo nome */
   const om=MC.get(old);
   t.name=name;KM=null;
   const nk=key(t);if(had)seen.add(nk);
   MC.delete(old);
-  if(om){const a=artOf(t.name),n=nm(t.name);om.title=a?n.replace(/^.*?\s+[-–—]\s+/,''):n;om.artist=a||om.artist;MC.set(nk,om)}
+  if(om){build(om,t.name);MC.set(nk,om)}
   if(!remote)openConns().forEach(c=>sendJ(c,{t:'mu-rn',ok:old,name,size:t.size}));
   PL.forEach(p=>{
     const j=p.keys.indexOf(old);if(j<0)return;
@@ -854,14 +1011,14 @@ function npQueue(){
   if(shuf)return h+'<p class=sp-s>Modo aleatório ligado: a próxima música é sorteada.</p>';
   const q=qOf(ctx),i=q.indexOf(cur),L=i<0?[]:q.slice(i+1,i+16);
   if(!L.length)return h+'<p class=sp-s>'+(rep&&q.length>1?'Depois desta, a lista volta ao início.':'Esta é a última música da lista.')+'</p>';
-  return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||(p?p.name:APP))}</p></div></div>`).join('');
+  return h+L.map(j=>`<div class=sp-r><div class=sp-cv style="${artSt(T[j])}" onclick="MU.qp(${j})">${artIc(T[j])}</div><div class=sp-i onclick="MU.qp(${j})"><div class=sp-n>${esc(meta(T[j]).title)}</div><p class=sp-s>${esc(meta(T[j]).artist||UNK)}</p></div></div>`).join('');
 }
 function npBody(){
   const t=T[cur];if(!t)return'';
   const pl=playing(),p=ctx&&pget(ctx),d=curDur(),m=meta(t);
   return`<div class=np-top><button class=np-x onclick="MU.nph(0)" aria-label="Minimizar">${I.chevd}</button><div class=np-c><small>${p?'Tocando da playlist':'Tocando agora'}</small><b>${p?esc(p.name):'Suas músicas'}</b></div><span class=np-spc></span></div>
 <div class=np-art style="${artSt(t)}">${artIc(t)}</div>
-<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||APP)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
+<div class=np-ti><div class=np-tt><b>${esc(m.title)}</b><span>${esc(m.artist||UNK)}</span></div><button class=sp-ib onclick="MU.npa('ren')" title="Renomear" aria-label="Renomear">${I.edit}</button><button class=sp-ib onclick="MU.npa('add')" title="Adicionar a uma playlist" aria-label="Adicionar a uma playlist">${I.plus}</button></div>
 ${bar(curPos(),d)}${ctrl('MU.lc',pl,shuf,rep)}${vol('mu-npv',curVol())}
 <div class=np-ft>${dbi()}</div><p class=sp-s id=mu-tt style="text-align:center;margin-top:10px">${tline()}</p>${npQueue()}`;
 }
@@ -986,8 +1143,10 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .sp-pc{background:#181818;border-radius:10px;padding:12px;cursor:pointer}
 .sp-pc:hover{background:#282828}
 .sp-pc .sp-cv{width:100%;height:auto;aspect-ratio:1;font-size:40px;margin-bottom:10px}
-.sp-mos{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:0;padding:0;overflow:hidden}
+/* capa 2x2 da playlist: as células precisam ESTICAR (o .sp-cv base usa align-items:center, que deixava as células vazias com altura 0 quando tinham só imagem de fundo) */
+.sp-mos{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:0;padding:0;overflow:hidden;align-items:stretch;justify-items:stretch;align-content:stretch;justify-content:stretch;aspect-ratio:1}
 .sp-mc{display:flex;align-items:center;justify-content:center;background:#2a2a2a;color:#ffffff55;min-width:0;min-height:0;overflow:hidden}
+.sp-mos>.sp-mc{width:100%;height:100%}
 .sp .sp-mc svg{width:.55em;height:.55em}
 .sp-q{width:100%;background:#2a2a2a;border:0;border-radius:999px;color:#fff;padding:11px 18px;font:inherit;font-size:15px;margin-bottom:10px;outline:0}
 .sp-q:focus{box-shadow:0 0 0 2px #1db954}
@@ -1079,7 +1238,7 @@ function ban(){
 /* Mini player (barra fixa de baixo, em todas as abas) */
 function mini(){
   const t=cur>=0&&T[cur],pl=playing(),w=curDur()>0?curPos()/curDur()*100:0;
-  return`<div class=sp-mini><div class=sp-cv style="${t?artSt(t):'background:#2a2a2a'}" onclick="MU.nph(1)">${t?artIc(t):I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(meta(t).title):'Nada tocando'}</div><p class=sp-s>${t?esc(meta(t).artist||APP):esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
+  return`<div class=sp-mini><div class=sp-cv style="${t?artSt(t):'background:#2a2a2a'}" onclick="MU.nph(1)">${t?artIc(t):I.note}</div><div class=sp-i role=button tabindex=0 aria-label="Abrir Tocando agora" onclick="MU.nph(1)" onkeydown="if(event.key=='Enter'||event.key==' '){event.preventDefault();MU.nph(1)}"><div class=sp-n>${t?esc(meta(t).title):'Nada tocando'}</div><p class=sp-s>${t?esc(meta(t).artist||UNK):esc(APP)}</p></div>${dbi()}<button class=sp-ib onclick="MU.lc('pv')" aria-label="Anterior">${I.prev}</button><button class="sp-pp sm" onclick="MU.lc('tg')" aria-label="Tocar ou pausar">${pl?I.pause:I.play}</button><button class=sp-ib onclick="MU.lc('nx')" aria-label="Próxima">${I.next}</button><div class=sp-prog><i id=mu-mp style="width:${w}%"></i></div></div>`;
 }
 /* Barra de navegação do Música (fixa embaixo) */
 const bnav=()=>`<div class=sp-nav>${[['home','Início',I.home],['lib','Músicas',I.note],['pls','Playlists',I.list],['dev','Aparelhos',I.dev]].map(a=>`<button class="sp-nb${TAB==a[0]?' on':''}" onclick="MU.tab('${a[0]}')"${TAB==a[0]?' aria-current=page':''}>${a[2]}<span>${a[1]}</span></button>`).join('')}</div>`;
@@ -1215,7 +1374,7 @@ function playPL(id){
 /* ---- registro na página ---- */
 if(!PG.some(p=>p[0]=='mus'))PG.splice(PG.length-1,0,['mus','🎵','Música']);
 P.mus=view;
-dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;draw();bls()}).catch(()=>{fail=1;draw()});
+dbp.then(()=>tx('readonly',s=>s.getAll())).then(r=>{T=r||[];KM=null;migStats();draw();bls()}).catch(()=>{fail=1;draw()});
 
 return{
   add,pl:i=>play(i,1,null),rm:del,nx:next,pv:prev,
