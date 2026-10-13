@@ -141,6 +141,8 @@ const plSt=p=>p.img?'background:#222 url('+p.img+') center/cover no-repeat':cov(
 /* troca o emoji 🎵 da entrada "Playtify" (menu/tela inicial do site) pela logo do Playtify, sem mexer no index.js */
 function logoSwap(){
   try{
+    /* O arquivo recebido está sem os PNGs base64 originais. Não substitua ícones válidos por imagens vazias. */
+    if(!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(LOGO)||LOGO==='data:image/png;base64,'||LOGOS==='data:image/png;base64,')return;
     if(!document.getElementById('mu-lgcss')){const st=document.createElement('style');st.id='mu-lgcss';
       st.textContent='img.mu-lg{width:1.3em;height:1.3em;border-radius:22%;vertical-align:-.28em;object-fit:cover;display:inline-block}';document.head.appendChild(st)}
     const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:n=>{
@@ -1535,7 +1537,7 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px;background:va
 .sp-r{display:flex;align-items:center;gap:12px;padding:6px 8px;border-radius:8px}
 .sp-r:hover{background:var(--mu-hi)}
 .sp-r.on .sp-n{color:#1db954}
-.sp-cv{width:46px;height:46px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:none;cursor:pointer;color:#ffffffcc}
+.sp-cv{width:46px;height:46px;min-width:0;min-height:0;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;background-color:var(--mu-hi);background-position:center;background-size:cover;background-repeat:no-repeat;font-size:20px;flex:none;cursor:pointer;color:#ffffffcc}
 .sp-i{flex:1;min-width:0;cursor:pointer}
 .sp-n{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sp-ib{background:none;border:0;color:var(--mu-dim);font:inherit;font-size:20px;cursor:pointer;padding:6px 9px;border-radius:50%;line-height:1;display:inline-flex;align-items:center;justify-content:center}
@@ -1561,10 +1563,10 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px;background:va
 .sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
 .sp-pc{background:var(--mu-panel);border-radius:10px;padding:12px;cursor:pointer}
 .sp-pc:hover{background:var(--mu-hi)}
-.sp-pc .sp-cv{width:100%;height:auto;aspect-ratio:1;font-size:40px;margin-bottom:10px}
+.sp-pc .sp-cv{width:100%;height:auto;min-height:0;aspect-ratio:1;overflow:hidden;font-size:40px;margin-bottom:10px}
 /* capa 2x2 da playlist: as células precisam ESTICAR (o .sp-cv base usa align-items:center, que deixava as células vazias com altura 0 quando tinham só imagem de fundo) */
 .sp-mos{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:0;padding:0;overflow:hidden;align-items:stretch;justify-items:stretch;align-content:stretch;justify-content:stretch;aspect-ratio:1}
-.sp-mc{display:flex;align-items:center;justify-content:center;background:var(--mu-hi);color:#ffffff55;min-width:0;min-height:0;overflow:hidden}
+.sp-mc{display:flex;align-items:center;justify-content:center;background-color:var(--mu-hi);background-position:center;background-size:cover;background-repeat:no-repeat;color:#ffffff55;min-width:0;min-height:0;overflow:hidden}
 .sp-mos>.sp-mc{width:100%;height:100%}
 .sp .sp-mc svg{width:.55em;height:.55em}
 .sp-q{width:100%;background:var(--mu-hi);border:0;border-radius:999px;color:#fff;padding:11px 18px;font:inherit;font-size:15px;margin-bottom:10px;outline:0}
