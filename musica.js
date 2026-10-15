@@ -870,6 +870,36 @@ function play(i,auto=1,c,back,pos){
   if(auto)playEl();
   draw();
 }
+/* Reprodução inteligente da biblioteca: agrupa por gênero quando há tags ID3,
+   depois prioriza artista/álbum semelhantes. Playlists e álbuns mantêm sua ordem normal. */
+const normMusic=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const genreOf=i=>{
+  const m=meta(T[i]),raw=m&&m.tag&&m.tag.genre;
+  if(!raw)return '';
+  return normMusic(String(raw).split(/[;,/|]/)[0].replace(/^\(\d+\)$/,''));
+};
+const artistOf=i=>normMusic(meta(T[i]).artist||meta(T[i]).tag&&meta(T[i]).tag.albumArtist||'');
+const albumOf=i=>normMusic(meta(T[i]).album||'');
+function smartLibraryNext(q){
+  const candidates=q.filter(i=>i!==cur);
+  if(!candidates.length)return -1;
+  const g=genreOf(cur),a=artistOf(cur),al=albumOf(cur);
+  /* Primeiro, mesma faixa de gênero; entre elas, favorece não repetir artista imediatamente. */
+  let pool=g?candidates.filter(i=>genreOf(i)===g):[];
+  if(pool.length){
+    const differentArtist=pool.filter(i=>artistOf(i)!==a);
+    if(differentArtist.length)pool=differentArtist;
+    const otherAlbum=pool.filter(i=>albumOf(i)!==al);
+    if(otherAlbum.length)pool=otherAlbum;
+  }else if(a){
+    pool=candidates.filter(i=>artistOf(i)===a&&artistOf(i));
+    if(!pool.length&&al)pool=candidates.filter(i=>albumOf(i)===al&&albumOf(i));
+  }else if(al){pool=candidates.filter(i=>albumOf(i)===al&&albumOf(i))}
+  /* Tags ausentes ou gênero sem correspondência: fallback para o restante da biblioteca. */
+  if(!pool.length)pool=candidates;
+  /* Escolha entre algumas opções do grupo, sem deixar a sequência presa a uma ordem fixa. */
+  return pool[Math.floor(Math.random()*pool.length)];
+}
 const nextI=d=>{
   const q=qOf(ctx);if(!q.length)return -1;
   if(shuf&&q.length>1){
@@ -877,6 +907,7 @@ const nextI=d=>{
     if(!c.length){seen.clear();if(cur>=0&&T[cur])seen.add(key(T[cur]));c=q.filter(i=>i!=cur)}
     return c[Math.floor(Math.random()*c.length)];
   }
+  if(ctx===null&&d>0&&q.length>1)return smartLibraryNext(q);
   const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length];
 };
 const next=()=>{const q=qOf(ctx);if(q.length<2&&!rep){if(cur>=0){pauseNow();seekTo(0)}return}const n=nextI(1);if(n>=0)play(n)};
@@ -947,7 +978,8 @@ on('ended',()=>{
   /* Faixa avulsa: a fila é a biblioteca inteira, começando pela próxima música
      após a faixa atual. Não encerra a reprodução só porque ela foi iniciada fora de uma playlist. */
   if(ctx===null&&!shuf){
-    if(cur>=0&&cur<T.length-1){play(cur+1,1,null);return}
+    const n=nextI(1);
+    if(n>=0){play(n,1,null);return}
     if(rep&&T.length){play(0,1,null);return}
     keep(0);draw();bcast();return;
   }
