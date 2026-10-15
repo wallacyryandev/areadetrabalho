@@ -870,36 +870,6 @@ function play(i,auto=1,c,back,pos){
   if(auto)playEl();
   draw();
 }
-/* Reprodução inteligente da biblioteca: agrupa por gênero quando há tags ID3,
-   depois prioriza artista/álbum semelhantes. Playlists e álbuns mantêm sua ordem normal. */
-const normMusic=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-const genreOf=i=>{
-  const m=meta(T[i]),raw=m&&m.tag&&m.tag.genre;
-  if(!raw)return '';
-  return normMusic(String(raw).split(/[;,/|]/)[0].replace(/^\(\d+\)$/,''));
-};
-const artistOf=i=>normMusic(meta(T[i]).artist||meta(T[i]).tag&&meta(T[i]).tag.albumArtist||'');
-const albumOf=i=>normMusic(meta(T[i]).album||'');
-function smartLibraryNext(q){
-  const candidates=q.filter(i=>i!==cur);
-  if(!candidates.length)return -1;
-  const g=genreOf(cur),a=artistOf(cur),al=albumOf(cur);
-  /* Primeiro, mesma faixa de gênero; entre elas, favorece não repetir artista imediatamente. */
-  let pool=g?candidates.filter(i=>genreOf(i)===g):[];
-  if(pool.length){
-    const differentArtist=pool.filter(i=>artistOf(i)!==a);
-    if(differentArtist.length)pool=differentArtist;
-    const otherAlbum=pool.filter(i=>albumOf(i)!==al);
-    if(otherAlbum.length)pool=otherAlbum;
-  }else if(a){
-    pool=candidates.filter(i=>artistOf(i)===a&&artistOf(i));
-    if(!pool.length&&al)pool=candidates.filter(i=>albumOf(i)===al&&albumOf(i));
-  }else if(al){pool=candidates.filter(i=>albumOf(i)===al&&albumOf(i))}
-  /* Tags ausentes ou gênero sem correspondência: fallback para o restante da biblioteca. */
-  if(!pool.length)pool=candidates;
-  /* Escolha entre algumas opções do grupo, sem deixar a sequência presa a uma ordem fixa. */
-  return pool[Math.floor(Math.random()*pool.length)];
-}
 const nextI=d=>{
   const q=qOf(ctx);if(!q.length)return -1;
   if(shuf&&q.length>1){
@@ -907,7 +877,6 @@ const nextI=d=>{
     if(!c.length){seen.clear();if(cur>=0&&T[cur])seen.add(key(T[cur]));c=q.filter(i=>i!=cur)}
     return c[Math.floor(Math.random()*c.length)];
   }
-  if(ctx===null&&d>0&&q.length>1)return smartLibraryNext(q);
   const p=q.indexOf(cur);return p<0?(d>0?q[0]:q[q.length-1]):q[(p+d+q.length)%q.length];
 };
 const next=()=>{const q=qOf(ctx);if(q.length<2&&!rep){if(cur>=0){pauseNow();seekTo(0)}return}const n=nextI(1);if(n>=0)play(n)};
@@ -975,14 +944,6 @@ on('timeupdate',()=>{
 on('ended',()=>{
   if(pre){handoff();return}
   const q=qOf(ctx),p=q.indexOf(cur);
-  /* Faixa avulsa: a fila é a biblioteca inteira, começando pela próxima música
-     após a faixa atual. Não encerra a reprodução só porque ela foi iniciada fora de uma playlist. */
-  if(ctx===null&&!shuf){
-    const n=nextI(1);
-    if(n>=0){play(n,1,null);return}
-    if(rep&&T.length){play(0,1,null);return}
-    keep(0);draw();bcast();return;
-  }
   if(q.length>1&&(shuf||p<q.length-1))next();
   else if(rep&&q.length)play(q[0]);
   else{keep(0);draw();bcast()}
@@ -1737,6 +1698,72 @@ body.mu-full main{margin-left:0;max-width:none;padding-bottom:18px;background:va
 @keyframes hm-sh{to{background-position:-200% 0}}
 .hm-err{box-shadow:inset 0 0 0 1px #ff6b6b66}
 @media(prefers-reduced-motion:reduce){.hm-sk *{animation:none!important}.hm-pb,.hm-c,.hm-ch{transition:none}}
+
+/* ===== Refinamento desktop: estrutura inspirada em players de streaming ===== */
+@media (min-width: 761px){
+  body.mu-full{background:#000!important}
+  body.mu-full main{padding:0 0 96px!important;margin:0!important;max-width:none!important;background:#000!important;min-width:0}
+  body.mu-full .sp{margin:0 0 0 0;padding:20px 28px 120px 264px;min-height:100vh;border-radius:0;background:linear-gradient(180deg,#202020 0,#121212 360px,#121212 100%);color:#f7f7f7}
+  body.mu-full .sp-top{height:40px;margin:0 0 22px;justify-content:flex-end}
+  body.mu-full .sp-top .sp-lg{display:none}
+  body.mu-full .sp-top>.sp-ib{width:36px;height:36px;background:#121212;border-radius:50%;font-size:20px}
+  body.mu-full .sp-top>.sp-ib:hover{background:#292929}
+  body.mu-full .sp-nav{position:fixed;z-index:41;left:0;top:0;bottom:90px;width:240px;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:8px;padding:22px 12px 16px;background:#000;border:0;border-right:1px solid #191919;overflow-y:auto}
+  body.mu-full .sp-nav:before{content:"♫  Playtify";display:block;color:#fff;font-size:25px;font-weight:800;letter-spacing:-1px;padding:4px 12px 24px;white-space:nowrap}
+  body.mu-full .sp-nb{flex:none;width:100%;min-height:46px;flex-direction:row;justify-content:flex-start;align-items:center;gap:14px;padding:10px 12px;border-radius:6px;font-size:14px;font-weight:700;color:#b3b3b3;text-align:left}
+  body.mu-full .sp-nb svg{font-size:23px;width:24px;height:24px}
+  body.mu-full .sp-nb.on{background:#242424;color:#fff}
+  body.mu-full .sp-nb.on svg{color:#1ed760}
+  body.mu-full .sp-nb:hover{background:#181818;color:#fff}
+  body.mu-full .sp-bot{position:fixed;z-index:40;left:0;right:0;bottom:0;height:90px;background:#181818;border-top:1px solid #2a2a2a;box-shadow:none}
+  body.mu-full .sp-bi{max-width:none;width:100%;height:100%;margin:0;display:block}
+  body.mu-full .sp-mini{height:100%;min-height:0;margin:0;padding:12px 22px 16px;background:#181818;border-radius:0;gap:14px}
+  body.mu-full .sp-mini .sp-cv{width:56px;height:56px;border-radius:4px;flex:none}
+  body.mu-full .sp-mini .sp-i{max-width:260px}
+  body.mu-full .sp-mini .sp-n{font-size:14px}
+  body.mu-full .sp-mini .sp-s{font-size:12px}
+  body.mu-full .sp-mini .sp-dvb{max-width:190px;margin-left:auto;font-size:12px}
+  body.mu-full .sp-mini .sp-ib{font-size:19px;padding:8px}
+  body.mu-full .sp-mini .sp-pp{width:36px;height:36px}
+  body.mu-full .sp-mini .sp-prog{left:22px;right:22px;bottom:4px;height:3px}
+  body.mu-full .sp-nav{box-shadow:none}
+  body.mu-full .sp-h{font-size:23px;margin:28px 0 14px;letter-spacing:-.35px}
+  body.mu-full .hm-hi{font-size:32px;margin:8px 0 24px}
+  body.mu-full .hm-sc{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  body.mu-full .hm-ch{height:64px;border-radius:5px}
+  body.mu-full .hm-ch .sp-cv{width:64px;height:64px}
+  body.mu-full .hm-row{gap:18px}
+  body.mu-full .hm-c{flex-basis:190px;padding:14px;border-radius:8px}
+  body.mu-full .hm-im{border-radius:5px;box-shadow:0 4px 14px #0005}
+  body.mu-full .sp-pc{padding:16px;border-radius:8px;background:#181818}
+  body.mu-full .sp-pc:hover{background:#282828}
+  body.mu-full .sp-card{background:#181818;border-radius:8px}
+  body.mu-full .sp-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:18px}
+  body.mu-full .sp-q{background:#242424;border:1px solid transparent}
+  body.mu-full .sp-q:focus{border-color:#1ed760;box-shadow:none}
+  body.mu-full .sp-pp{background:#1ed760}
+  body.mu-full .sp-pp:hover{background:#3be477}
+  body.mu-full .sp-btn{background:#1ed760}
+  body.mu-full .sp-btn:hover{background:#3be477}
+  body.mu-full .sp-btn.g{box-shadow:inset 0 0 0 1px #727272}
+}
+@media (max-width: 760px){
+  body.mu-full .sp{margin:0;padding:16px 14px 14px;min-height:60vh;border-radius:16px;background:var(--mu-bg)}
+  body.mu-full .sp-nav{position:static;width:auto;top:auto;bottom:auto;display:flex;flex-direction:row;align-items:stretch;justify-content:initial;gap:0;padding:0;border-top:1px solid var(--mu-line);border-right:0;overflow:visible}
+  body.mu-full .sp-nav:before{display:none;content:none}
+  body.mu-full .sp-nb{flex:1;width:auto;min-height:0;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 4px 10px;border-radius:0;font-size:11px;text-align:center}
+  body.mu-full .sp-nb svg{font-size:24px;width:1em;height:1em}
+  body.mu-full .sp-bot{left:0;right:0;bottom:0;height:auto;border-top:0;background:var(--mu-bg);box-shadow:0 -8px 24px #000c}
+  body.mu-full .sp-bi{max-width:720px;height:auto;margin:0 auto;display:block}
+  body.mu-full .sp-mini{height:auto;min-height:0;margin:8px 8px 4px;padding:8px 10px 12px;background:var(--mu-hi);border-radius:10px;gap:6px}
+  body.mu-full .sp-mini .sp-cv{width:40px;height:40px}
+  body.mu-full .sp-mini .sp-dvb{max-width:130px;margin-left:0}
+  body.mu-full .sp-mini .sp-prog{left:10px;right:10px;bottom:4px}
+  body.mu-full .sp-top{height:auto;margin:2px 0 12px;justify-content:space-between}
+  body.mu-full .sp-top .sp-lg{display:flex}
+  body.mu-full .hm-sc{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  body.mu-full .hm-c{flex-basis:148px;padding:12px}
+}
 </style>`;
 
 /* ---- telas ---- */
