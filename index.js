@@ -69,7 +69,7 @@ const mdl=h=>{SM=null;const m=$('#md');m.innerHTML='<div class=box>'+h+'</div>';
 const showOk=h=>{mdl(okH(h));SM={h}},refOk=()=>{if(SM&&$('#md').className=='on')showOk(SM.h)};
 const lst=()=>[me(),...C.links.filter(l=>openIds().has(l.id))].map(x=>`<div class=r>${esc(x.icon+' '+x.name)}</div>`).join('');
 const okH=h=>`<h3>🟢 Sincronizado</h3><p><b>${openIds().size+1} dispositivos conectados</b></p><div style="margin:10px 0">${lst()}</div><p class=s>As alterações feitas em qualquer dispositivo aparecem nos outros em tempo real.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Concluir</button>${h?'<button class="b g" onclick="SY.host()">+ Conectar outro</button>':''}</div>`;
-function drawHost(){const h=H;if(!h)return;if(h.st=='done')return showOk(1);if(h.st=='late')return mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Hub continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`);
+function drawHost(){const h=H;if(!h)return;if(h.st=='done')return showOk(1);if(h.st=='late')return mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Arco continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`);
 const x=h.st=='exp',e=h.st=='err',tx={prep:'Preparando…',wait:'Aguardando o outro dispositivo…',used:'Conectando…'}[h.st]||'';
 mdl(`<h3>🔗 Conectar dispositivo</h3><p class=s>Código de conexão</p><div class="code${x?' x':''}">${h.code}</div><p class=s>Compartilhe este código com o outro dispositivo.</p>
 <p style="margin:10px 0">${x?'⌛ <b>Código expirado</b>':e?'<span style="color:var(--er)">⚠ Não foi possível falar com o servidor de conexão'+(LE?' ('+LE+')':'')+'. Verifique a internet.</span>':'⏱ Expira em <b id=cdn>'+rem()+'</b>'}</p><p class=s id=cst>${tx}</p>
@@ -99,7 +99,7 @@ c.on('open',()=>{if(J!==j)return;say('3/4 Pareando…');snd(c,{t:'pair',dev:me()
 c.on('error',e=>{log('canal',e&&e.type);if(J===j)j.fail('Falha na conexão direta ('+(e&&e.type||'erro')+'). Tente na mesma Wi-Fi.')});
 c.on('data',d=>{d=rcv(c,d);if(J!==j||!d)return;if(d.t=='no')return j.fail(d.r=='self'?'Este código foi gerado neste mesmo navegador (outra aba). Use outro navegador ou outro aparelho.':'Código já utilizado ou expirado. Gere um novo.');if(d.t!='paired')return;
 J=null;clearTimeout(j.to);link(d.dev);(d.peers||[]).forEach(link);C.bak=1;saveC();peer();say('4/4 Conectado! Sincronizando…');connectAll();burst();end();
-waitReady(d.dev.id,()=>showOk(0),()=>mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Hub continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`))})})}
+waitReady(d.dev.id,()=>showOk(0),()=>mdl(`<h3>⚠ Quase lá</h3><p>O pareamento foi feito, mas a conexão direta ainda não abriu. O Arco continua tentando automaticamente.</p><div class=row style="margin-top:12px"><button class=b onclick="SY.close()">Fechar</button></div>`))})})}
 const api={ttl:300000,
 init(){S._m=S._m||{};for(const k of SYK){DJ[k]=JSON.stringify(DEF0[k]);LJ[k]=JSON.stringify(S[k]);if(!S._m[k])S._m[k]=LJ[k]===DJ[k]?{t:0,d:''}:{t:Date.now(),d:C.id};HC=Math.max(HC,S._m[k].t)}
 try{localStorage.setItem('hub',JSON.stringify(S))}catch(e){}try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}

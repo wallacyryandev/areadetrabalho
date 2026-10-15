@@ -1,4 +1,4 @@
-/* Hub Pessoal - corrida.js (v4)
+/* Hub Pessoal - corrida.js (v5 + visual tipo app de corrida: GPS mais robusto em segundo plano, aviso offline, recuperação sem duplicar)
    Página "Corrida": gravação ao vivo com GPS, trajeto desenhado a partir das coordenadas reais,
    cartão PNG e exportação do trajeto com fundo transparente, registro manual, histórico e recordes.
    Visual de feed (estilo Strava) com barra fixa "Gravar"; barra de navegação do Hub some nesta página e a
@@ -18,7 +18,7 @@ const LK='hub_run_live';
    gap: intervalo (s) sem pontos que abre novo trecho · weak: segundos sem posição = sinal fraco · cap: máx. de pontos salvos */
 const GP={acc:25,step:3,vmax:12,win:30,gap:90,weak:15,minKm:.02,minSec:10,cap:400};
 let rf='mes',rv=null,LV=null,wid=null,wlk=null,wtok=0,starting=false,lim=20,fresh=false,lastSave=0,
-    gps={err:null,fix:0,acc:NaN,gap:0},shr=null,bk={b:'',m:''},MENU=0;
+    gps={err:null,fix:0,acc:NaN,gap:0},shr=null,bk={b:'',m:''},MENU=0,wdog=0,svErr=0;
 
 /* barra de navegação do Hub some na página Corrida (igual à Música); a engrenagem abre a tela de menu */
 const _render=render;
@@ -234,9 +234,9 @@ function cvRoute(x,col){
 
 /* =====================================================================
    6. GRAVAÇÃO AO VIVO: estado, GPS, filtros
-   LV = {t0, pm (ms pausados), pa (início da pausa), seg, m (metros), pts:[[ts,lat,lon,seg]], st:'rec'|'pau', rc, hb}
+   LV = {t0, pm (ms pausados), pa (início da pausa), seg, m (metros), pts:[[ts,lat,lon,seg]], st:'rec'|'pau', rc, hb, id, lf (último fix aceito), gt (s sem GPS)}
    ===================================================================== */
-const saveLV=()=>{lastSave=Date.now();try{LV?localStorage.setItem(LK,JSON.stringify(LV)):localStorage.removeItem(LK)}catch(e){}};
+const saveLV=()=>{lastSave=Date.now();try{LV?localStorage.setItem(LK,JSON.stringify(LV)):localStorage.removeItem(LK);svErr=0}catch(e){svErr=1}};
 /* tempo ativo: relógio menos pausas; durante a pausa o valor fica congelado em LV.pa */
 const el=()=>LV?Math.max(0,Math.round(((LV.pa||Date.now())-LV.t0-LV.pm)/1000)):0;
 /* ritmo atual: últimos ~30 s do trecho atual; NaN se ainda não dá para calcular */
@@ -251,6 +251,7 @@ const cp=()=>{
 /* recuperação: se o app foi fechado no meio da corrida, volta pausada; o tempo com o app fechado NÃO conta.
    A pausa começa no último sinal de vida conhecido (último ponto ou batimento salvo). */
 try{LV=JSON.parse(localStorage.getItem(LK))}catch(e){LV=null}
+if(LV&&LV.id&&S.runs.some(r=>r.id==LV.id)){LV=null;saveLV()}      /* já foi finalizada: não duplica */
 if(LV&&isFinite(LV.t0)&&Array.isArray(LV.pts)){
   LV.pts=LV.pts.filter(p=>Array.isArray(p)&&p.length>=4&&isFinite(p[0])&&isFinite(p[1])&&isFinite(p[2]));
   LV.pm=isFinite(LV.pm)?LV.pm:0;LV.m=isFinite(LV.m)&&LV.m>=0?LV.m:0;LV.seg=isFinite(LV.seg)?LV.seg:0;
@@ -262,21 +263,24 @@ if(LV&&isFinite(LV.t0)&&Array.isArray(LV.pts)){
 
 const onPos=p=>{
   if(!LV||LV.st!='rec')return;
-  const c=p.coords,ts=p.timestamp||Date.now();
-  gps.fix=Date.now();gps.acc=c.accuracy;gps.err=null;
+  const c=p.coords,now=Date.now(),ts=p.timestamp||now;
+  gps.fix=now;gps.acc=c.accuracy;gps.err=null;
   if(!isFinite(c.latitude)||!isFinite(c.longitude)||!(c.accuracy<=GP.acc)||ts<LV.t0)return;   /* sinal ruim */
-  const l=LV.pts[LV.pts.length-1];
+  const l=LV.pts[LV.pts.length-1],lf=LV.lf>LV.t0?LV.lf:(l?l[0]:0);     /* último fix aceito, mesmo sem virar ponto */
   if(l&&l[3]==LV.seg){
-    const dts=(ts-l[0])/1000,d=hv(l[1],l[2],c.latitude,c.longitude);
+    const dts=(ts-lf)/1000;
     if(dts<=0)return;
-    if(dts>GP.gap){LV.seg++;gps.gap=Date.now()}                       /* ficou muito tempo sem ponto: novo trecho, sem ligar em linha reta */
+    if(dts>GP.gap){LV.seg++;gps.gap=now;LV.gt=(LV.gt||0)+dts}         /* lacuna real: novo trecho, sem ligar em linha reta */
     else{
-      if(d<Math.max(GP.step,c.accuracy*.35)||d/dts>GP.vmax)return;     /* parado/tremida ou salto de GPS */
+      const d=hv(l[1],l[2],c.latitude,c.longitude);
+      if(d<Math.max(GP.step,c.accuracy*.35)){LV.lf=ts;return}          /* parado/tremida, mas o GPS está vivo */
+      if(d/((ts-l[0])/1000)>GP.vmax)return;                            /* salto de GPS */
       LV.m+=d;
     }
   }
+  LV.lf=ts;
   LV.pts.push([ts,+c.latitude.toFixed(6),+c.longitude.toFixed(6),LV.seg]);
-  if(Date.now()-lastSave>3000)saveLV();
+  if(now-lastSave>3000)saveLV();
   upd();
 };
 const er=e=>{
@@ -287,24 +291,28 @@ const er=e=>{
     saveLV();render();
   }else gps.err=e.code==3?'timeout':'unavail';
 };
-function stopW(){
-  wtok++;
-  if(wid!=null){try{navigator.geolocation.clearWatch(wid)}catch(e){}wid=null}
-  if(wlk){try{wlk.release().catch(()=>{})}catch(e){}wlk=null}
-}
-function startW(){
-  stopW();const t=wtok;                                                /* garante um único observador */
+function stopG(){if(wid!=null){try{navigator.geolocation.clearWatch(wid)}catch(e){}wid=null}}
+function stopW(){wtok++;stopG();if(wlk){try{wlk.release().catch(()=>{})}catch(e){}wlk=null}}
+function watch(){                                                      /* um único observador de GPS */
+  stopG();wdog=Date.now();
   try{wid=navigator.geolocation.watchPosition(onPos,er,{enableHighAccuracy:true,maximumAge:0,timeout:30000})}catch(e){gps.err='unavail'}
-  try{navigator.wakeLock&&navigator.wakeLock.request('screen').then(l=>{
-    if(t!==wtok||!LV||LV.st!='rec'){try{l.release().catch(()=>{})}catch(e){}return}
-    wlk=l;
-  }).catch(()=>{})}catch(e){}                                          /* tela acesa */
 }
+function acqWL(){                                                      /* auxiliar: tela acesa; NÃO garante GPS com a tela bloqueada */
+  if(!navigator.wakeLock||wlk||document.hidden||!LV||LV.st!='rec')return;
+  const t=wtok;
+  try{navigator.wakeLock.request('screen').then(l=>{
+    if(t!==wtok||!LV||LV.st!='rec'||wlk){try{l.release().catch(()=>{})}catch(e){}return}
+    wlk=l;l.addEventListener('release',()=>{if(wlk===l)wlk=null});
+  }).catch(()=>{})}catch(e){}
+}
+function startW(){stopW();watch();acqWL()}
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){if(LV)saveLV();return}
-  if(LV&&LV.st=='rec')startW();                                        /* reabre GPS e bloqueio de tela ao voltar */
+  if(LV&&LV.st=='rec'){if(wid==null)watch();acqWL();tick()}           /* NÃO reinicia o watch ao voltar; só reabre se estiver morto */
 });
+document.addEventListener('freeze',()=>{if(LV)saveLV()});
 window.addEventListener('pagehide',()=>{if(LV)saveLV()});
+window.addEventListener('online',()=>{if(LV)upd()});window.addEventListener('offline',()=>{if(LV)upd()});
 
 /* =====================================================================
    7. TELA AO VIVO: atualização contínua
@@ -312,11 +320,12 @@ window.addEventListener('pagehide',()=>{if(LV)saveLV()});
 const setT=(id,t)=>{const e=document.getElementById(id);if(e&&e.textContent!==t)e.textContent=t};
 const liveState=()=>{
   if(LV.st=='pau')return LV.rc?'int':'pau';
+  if(gps.err=='unavail')return'sem';
   if(!LV.pts.length&&!gps.fix)return'busca';
   if(gps.fix&&(Date.now()-gps.fix)/1000>GP.weak)return'fraco';
   return'rec';
 };
-const STL={busca:'Procurando GPS',rec:'Gravando',fraco:'Sinal fraco',pau:'Em pausa',int:'Corrida interrompida'};
+const STL={sem:'GPS indisponível',busca:'Procurando GPS',rec:'Gravando',fraco:'Sinal fraco',pau:'Em pausa',int:'Corrida interrompida'};
 function banners(st){
   const o=[];
   if(LV.rc)o.push(['wa','Corrida interrompida','O app foi fechado durante a gravação. O tempo com o app fechado não foi contado. Retome, finalize ou descarte.']);
@@ -326,12 +335,15 @@ function banners(st){
   if(window.isSecureContext===false)o.push(['er','Conexão não segura','O GPS só funciona em HTTPS ou localhost.']);
   if(st=='fraco')o.push(['wa','Sinal fraco','Sem posição recente. Pontos imprecisos são ignorados para não distorcer a distância.']);
   if(gps.gap&&Date.now()-gps.gap<12000)o.push(['wa','Lacuna no GPS','O GPS ficou sem registrar por um tempo. O trecho sem dados não entrou na distância.']);
+  if(LV.gt>=30)o.push(['wa','Trechos sem dados de GPS','Cerca de '+(LV.gt/60).toFixed(1).replace('.',',')+' min sem posição (tela bloqueada ou GPS suspenso). O tempo foi contado; a distância desses trechos não.']);
+  if(svErr)o.push(['er','Falha ao salvar no aparelho','O armazenamento pode estar cheio. Finalize a corrida assim que possível.']);
   return o.map(b=>`<div class="rn-bn ${b[0]}" role="alert">${I('alert',20)}<div><b>${b[1]}</b><span>${b[2]}</span></div></div>`).join('');
 }
 function upd(){
   if(!LV)return;const r=document.getElementById('rl');if(!r)return;
   const s=el(),k=LV.m/1000,paused=LV.st=='pau',cur=paused?NaN:cp(),avg=k>=GP.minKm&&s>0?s/k:NaN,st=liveState();
   r.dataset.s=st;
+  const of=document.getElementById('rof');if(of)of.hidden=navigator.onLine!==false;
   setT('rt',fmT(s));setT('rk',kmn(k));setT('rp',fmPn(cur));setT('ra',fmPn(avg));
   document.getElementById('rp').parentNode.classList.toggle('na',!isFinite(cur));
   document.getElementById('ra').parentNode.classList.toggle('na',!isFinite(avg));
@@ -352,7 +364,10 @@ function upd(){
 }
 function tick(){
   try{
-    if(LV&&LV.st=='rec'){LV.hb=Date.now();if(Date.now()-lastSave>5000)saveLV()}   /* batimento: base para a recuperação */
+    if(LV&&LV.st=='rec'){
+      LV.hb=Date.now();if(Date.now()-lastSave>5000)saveLV();           /* batimento: base para a recuperação */
+      if(!document.hidden&&Date.now()-Math.max(gps.fix,wdog)>60000)watch();   /* watch morto pelo sistema: reabre (no máx. a cada 60 s) */
+    }
     upd();
   }catch(e){console.error('[corrida]',e)}
 }
@@ -458,10 +473,10 @@ const RUN={
   go(){
     if(LV||starting)return;
     if(!navigator.geolocation){toast('Este navegador não oferece GPS.','er');return}
-    if(window.isSecureContext===false){toast('O GPS só funciona em HTTPS ou localhost. Abra o Hub por um endereço seguro.','er');return}
+    if(window.isSecureContext===false){toast('O GPS só funciona em HTTPS ou localhost. Abra o Arco por um endereço seguro.','er');return}
     const start=()=>{
       starting=false;if(LV)return;
-      LV={t0:Date.now(),pm:0,pa:null,seg:0,m:0,pts:[],st:'rec',hb:Date.now()};
+      LV={t0:Date.now(),pm:0,pa:null,seg:0,m:0,pts:[],st:'rec',hb:Date.now(),id:uid(),lf:0,gt:0};
       gps={err:null,fix:0,acc:NaN,gap:0};bk={b:'',m:''};saveLV();startW();render();
     };
     starting=true;
@@ -477,7 +492,7 @@ const RUN={
   pz(){
     if(!LV)return;
     if(LV.st=='rec'){LV.st='pau';LV.pa=Date.now();stopW()}
-    else{LV.pm+=Date.now()-(LV.pa||Date.now());LV.pa=null;LV.seg++;LV.st='rec';LV.rc=0;gps={err:null,fix:0,acc:NaN,gap:0};startW()}
+    else{LV.pm+=Date.now()-(LV.pa||Date.now());LV.pa=null;LV.seg++;LV.lf=0;LV.st='rec';LV.rc=0;gps={err:null,fix:0,acc:NaN,gap:0};startW()}
     saveLV();bk={b:'',m:''};render();
   },
   fin(){
@@ -488,9 +503,10 @@ const RUN={
       stopW();
       const sec=el(),km=LV.m/1000;
       if(km<GP.minKm||sec<GP.minSec){LV=null;saveLV();toast('Corrida muito curta: não foi salva.','er');render();return}
-      const r={id:uid(),date:D(new Date(LV.t0)),km:+km.toFixed(3),sec,tipo:'rua',obs:''};
+      const r={id:LV.id||uid(),date:D(new Date(LV.t0)),km:+km.toFixed(3),sec,tipo:'rua',obs:''};
       if(LV.pts.length>=2)r.rota=ds(LV.pts);
-      S.runs.push(r);LV=null;saveLV();rv=r.id;fresh=true;RD();
+      S.runs.push(r);if(typeof sv=='function')sv();                  /* S.runs persiste primeiro; só depois remove hub_run_live */
+      LV=null;saveLV();rv=r.id;fresh=true;RD();
     });
   },
   dc(){
@@ -540,34 +556,38 @@ function live(){
   bk={b:'',m:''};setTimeout(tick,0);
   const pau=LV.st=='pau';
   return`<div class="rn rn-live" id="rl" data-s="${liveState()}">
-<div class="rn-lt"><span class="rn-pill"><i></i><span id="rstt">${STL[liveState()]}</span></span><span class="rn-sg" id="rsg" data-q="0" title="Sinal do GPS"><i></i><i></i><i></i><span id="rsq">Sem sinal</span></span></div>
+<div class="rn-lt"><span style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="rn-pill"><i></i><span id="rstt">${STL[liveState()]}</span></span><span class="rn-chip" id="rof"${navigator.onLine===false?'':' hidden'}>Offline · GPS ativo</span></span><span class="rn-sg" id="rsg" data-q="0" title="Sinal do GPS"><i></i><i></i><i></i><span id="rsq">Sem sinal</span></span></div>
 <div class="rn-lb" id="rbn"></div>
 <div class="rn-lbody">
-  <div class="rn-lm" id="rm"></div>
   <div class="rn-ls">
-    <div class="rn-tm"><b class="rn-time" id="rt">0:00</b><span class="rn-lab">Tempo ativo</span></div>
-    <div class="rn-ds"><div class="rn-dist"><b id="rk">0,00</b><small>km</small></div><span class="rn-lab">Distância</span></div>
-    <div class="rn-pc"><div class="rn-pb na"><b id="rp">—</b><span class="rn-lab">Ritmo atual (min/km)</span></div><div class="rn-pb na"><b id="ra">—</b><span class="rn-lab">Ritmo médio (min/km)</span></div></div>
+    <div class="rn-tm"><span class="rn-lab">Tempo</span><b class="rn-time" id="rt">0:00</b></div>
+    <div class="rn-ds"><span class="rn-lab">Distância</span><div class="rn-dist"><b id="rk">0,00</b><small>km</small></div></div>
+    <div class="rn-pc"><div class="rn-pb na"><span class="rn-lab">Ritmo atual</span><b id="rp">—</b><small>/km</small></div><div class="rn-pb na"><span class="rn-lab">Ritmo médio</span><b id="ra">—</b><small>/km</small></div></div>
   </div>
+  <div class="rn-lm" id="rm"></div>
 </div>
 <div class="rn-ctl">
   <div class="rn-cw"><button type="button" class="rn-rb sm" data-a="dc" aria-label="Descartar atividade">${I('trash',24)}</button><span>Descartar</span></div>
-  <div class="rn-cw"><button type="button" class="rn-rb main" data-a="pz" aria-label="${pau?'Retomar':'Pausar'}">${I(pau?'play':'pause',34)}</button><span>${pau?'Retomar':'Pausar'}</span></div>
+  <div class="rn-cw"><button type="button" class="rn-rb main" data-a="pz" aria-label="${pau?'Retomar':'Pausar'}">${I(pau?'play':'pause',36)}</button><span>${pau?'Retomar':'Pausar'}</span></div>
   <div class="rn-cw"><button type="button" class="rn-rb sm fin" data-a="fin" aria-label="Finalizar corrida">${I('stop',24)}</button><span>Finalizar</span></div>
 </div>
-<p class="rn-note c">Mantenha esta tela aberta. Ela fica acesa durante a gravação, mas o navegador pode pausar o GPS se a tela for bloqueada.${'wakeLock' in navigator?'':' Este navegador não consegue manter a tela acesa sozinho.'}</p>
+<p class="rn-note c">Mantenha esta tela aberta e o celular desbloqueado. Com a tela bloqueada, o Chrome pode pausar o GPS e o tempo sem dados não entra na distância. Funciona sem internet.${'wakeLock' in navigator?'':' Este navegador não consegue manter a tela acesa sozinho.'}</p>
 </div>`;
 }
 
 /* ---- detalhes de uma corrida ---- */
 function det(x){
-  const R=Array.isArray(x.rota)?x.rota:[],has=routeOk(R),pc=pcs(x.sec,x.km);
+  const R=Array.isArray(x.rota)?x.rota:[],has=routeOk(R),pc=pcs(x.sec,x.km),n=who();
   const map=has?rsvg(R,{w:640,h:430,pd:36}):R.length?`<div class="rn-nor">${I('pin',26)}<span>Poucos pontos GPS para desenhar o trajeto.</span></div>`:`<div class="rn-nor">${I('pin',26)}<b>Sem trajeto GPS</b><span>Esta corrida foi registrada manualmente, sem coordenadas.</span></div>`;
-  return`<div class="rn">
+  return`<div class="rn rn-dt">
 <div class="rn-top"><button type="button" class="rn-btn gh sm" data-a="b">${I('back',18)} Corridas</button></div>
 ${fresh?`<div class="rn-bn ok" role="status">${I('check',20)}<div><b>Corrida finalizada e salva</b><span>Ela já está no seu histórico. Compartilhe o cartão ou o trajeto.</span></div></div>`:''}
-<section class="rn-dh"><div class="rn-dmap">${map}</div>
-<div class="rn-dinfo"><span class="rn-lab">${esc(dlong(x.date))}</span><div class="rn-bign"><b>${kmn(x.km)}</b><small>km</small></div><div class="rn-chips"><span class="rn-chip">${esc(TIPO[x.tipo]||'Corrida')}</span>${has?`<span class="rn-chip a">${I('pin',14)} GPS</span>`:''}</div></div></section>
+<section class="rn-card rn-dc">
+<div class="rn-fh"><div class="rn-av">${esc(n.charAt(0).toUpperCase())}</div><div class="rn-fn"><b>${esc(n)}</b><span>${esc(dlong(x.date))} · ${esc(TIPO[x.tipo]||'Corrida')}</span></div>${has?`<span class="rn-chip a">${I('pin',13)} GPS</span>`:''}</div>
+<h2 class="rn-dtt">${esc(x.obs?String(x.obs).slice(0,60):(TT[x.tipo]||'Corrida'))}</h2>
+<div class="rn-fs big"><div><span class="rn-lab">Distância</span><b>${kmn(x.km)} <small>km</small></b></div><div><span class="rn-lab">Ritmo</span><b>${fmPn(pc)}${isFinite(pc)?' <small>/km</small>':''}</b></div><div><span class="rn-lab">Tempo</span><b>${fmT(x.sec)}</b></div></div>
+<div class="rn-dmap">${map}</div>
+</section>
 <section class="rn-tiles">${tile('clock',fmTu(x.sec),'Tempo ativo')}${tile('gauge',fmPn(pc)+(isFinite(pc)?' /km':''),'Ritmo médio',!isFinite(pc))}${tile('pulse',spd(x.sec,x.km),'Velocidade média')}${tile('cal',dt(x.date),'Data')}${tile('route',esc(TIPO[x.tipo]||'—'),'Atividade')}</section>
 ${x.obs?`<section class="rn-card"><span class="rn-lab">Observações</span><p class="rn-obs">${esc(x.obs)}</p></section>`:''}
 <div class="rn-act"><button type="button" class="rn-btn pri" data-a="sh" data-id="${esc(x.id)}">${I('share',18)} Compartilhar</button><button type="button" class="rn-btn" data-a="e" data-id="${esc(x.id)}">${I('edit',18)} Editar</button><button type="button" class="rn-btn gh dg" data-a="del" data-id="${esc(x.id)}">${I('trash',18)} Excluir</button></div>
@@ -587,19 +607,20 @@ const TT={rua:'Corrida na rua',esteira:'Corrida na esteira',trilha:'Corrida na t
 function feed(x){
   const R=x.rota,has=routeOk(R),pc=pcs(x.sec,x.km),n=who();
   return`<article class="rn-fc" role="button" tabindex="0" data-a="v" data-id="${esc(x.id)}" aria-label="Abrir corrida de ${kmf(x.km)} em ${dt(x.date)}">
-<div class="rn-fh"><div class="rn-av">${esc(n.charAt(0).toUpperCase())}</div><div class="rn-fn"><b>${esc(n)}</b><span>${esc(dlong(x.date))}</span></div>${has?`<span class="rn-chip a" title="Possui trajeto GPS">${I('pin',13)} GPS</span>`:''}</div>
+<div class="rn-fh"><div class="rn-av">${esc(n.charAt(0).toUpperCase())}</div><div class="rn-fn"><b>${esc(n)}</b><span>${esc(dlong(x.date))} · ${esc(TIPO[x.tipo]||'Corrida')}</span></div><span class="rn-sic" aria-hidden="true">${I('route',20)}</span></div>
 <h3 class="rn-ft">${esc(x.obs?String(x.obs).slice(0,60):(TT[x.tipo]||'Corrida'))}</h3>
 <div class="rn-fs"><div><span class="rn-lab">Distância</span><b>${kmn(x.km)} <small>km</small></b></div><div><span class="rn-lab">Ritmo</span><b>${fmPn(pc)}${isFinite(pc)?' <small>/km</small>':''}</b></div><div><span class="rn-lab">Tempo</span><b>${fmT(x.sec)}</b></div></div>
-${has?`<div class="rn-fm">${rsvg(R,{w:640,h:360,pd:30})}</div>`:''}</article>`;
+${has?`<div class="rn-fm">${rsvg(R,{w:640,h:360,pd:30})}</div>`:''}
+<div class="rn-fa"><button type="button" class="rn-fab" data-a="sh" data-id="${esc(x.id)}" aria-label="Compartilhar corrida">${I('share',20)}</button></div></article>`;
 }
 /* barra fixa de baixo: Gravar em destaque */
-const recBar=()=>`<div class="rn-bb" role="toolbar" aria-label="Gravar corrida"><div class="rn-bbi"><button type="button" class="rn-bm" data-a="n" aria-label="Registrar corrida manualmente">${I('plus',22)}<span>Manual</span></button><button type="button" class="rn-rec" data-a="go">${I('play',22)} Gravar</button><button type="button" class="rn-bm" data-a="rec" aria-label="Ver recordes">${I('trophy',22)}<span>Recordes</span></button></div></div>`;
+const recBar=()=>`<div class="rn-bb" role="toolbar" aria-label="Gravar corrida"><div class="rn-bbi"><button type="button" class="rn-bm" data-a="n" aria-label="Registrar corrida manualmente">${I('plus',24)}<span>Manual</span></button><button type="button" class="rn-rec" data-a="go" aria-label="Gravar corrida"><span class="rn-rd">${I('play',26)}</span><span>Gravar</span></button><button type="button" class="rn-bm" data-a="rec" aria-label="Ver recordes">${I('trophy',24)}<span>Recordes</span></button></div></div>`;
 
 /* tela de menu (engrenagem): perfil + páginas do Hub, igual à da Música */
 function menuView(){
   const n=who(),L=PG.filter(p=>p[0]!='run');
   return`<div class="rn"><div class="rn-mh"><button type="button" class="rn-ib" data-a="menu" data-id="0" aria-label="Voltar">${I('back',24)}</button><h1 style="flex:1;font-size:26px">Configurações</h1></div>
-<div class="rn-prof"><div class="rn-av">${esc(n.charAt(0).toUpperCase())}</div><div><b style="font-size:20px">${esc(n)}</b><p class="rn-mu">Hub Pessoal</p></div></div>
+<div class="rn-prof"><div class="rn-av">${esc(n.charAt(0).toUpperCase())}</div><div><b style="font-size:20px">${esc(n)}</b><p class="rn-mu">Arco</p></div></div>
 <p class="rn-mu" style="margin:0 12px 6px!important">Ir para</p>
 ${L.map(p=>`<div class="rn-mi" role="button" tabindex="0" data-a="goto" data-id="${esc(p[0])}"><span>${esc(p[2])}</span>${I('chev',20)}</div>`).join('')}</div>`;
 }
@@ -799,7 +820,8 @@ body.rn-full main{margin-left:0;max-width:none;padding-bottom:18px}
 .rn-live[data-s=busca] .rn-pill i,.rn-live[data-s=fraco] .rn-pill i{background:var(--rn-wa);animation:rnbl 1.1s infinite}
 .rn-live[data-s=rec] .rn-pill i{background:var(--rn-ok);animation:rnbl 1.6s infinite}
 .rn-live[data-s=pau] .rn-pill i{background:#60a5fa}
-.rn-live[data-s=int] .rn-pill i{background:var(--rn-er)}
+.rn-live[data-s=int] .rn-pill i,.rn-live[data-s=sem] .rn-pill i{background:var(--rn-er)}
+.rn-chip[hidden]{display:none}
 .rn-sg{display:inline-flex;align-items:flex-end;gap:3px;font-size:13px;font-weight:600}
 .rn-sg i{width:5px;border-radius:2px;background:var(--rn-ln)}.rn-sg i:nth-child(1){height:8px}.rn-sg i:nth-child(2){height:13px}.rn-sg i:nth-child(3){height:18px}
 .rn-sg span{margin-left:8px;opacity:.75;line-height:1}
@@ -853,6 +875,72 @@ body.rn-full main{margin-left:0;max-width:none;padding-bottom:18px}
 @media(max-width:380px){.rn-tl b{font-size:18px}.rn-id b{font-size:21px}.rn-ir b{font-size:15px}.rn-th{width:50px;height:50px}}
 @media(max-height:620px) and (max-width:719px){.rn-time{font-size:56px}.rn-dist b{font-size:42px}.rn-rb.main{width:72px;height:72px}.rn-rb.sm{width:54px;height:54px;margin-top:16px}.rn-pb b{font-size:24px}}
 @media(prefers-reduced-motion:reduce){.rn *,.rn-m,.rn-m *,.rn-ti{animation:none!important;transition:none!important}}
+
+/* ===== visual estilo app de corrida (apenas aparência; nenhuma lógica) ===== */
+.rn h1{font-weight:800;letter-spacing:-.02em}
+.rn-lab{font-size:12px;opacity:.6;font-weight:500;letter-spacing:.01em}
+/* feed */
+.rn-feed{grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:12px}
+.rn-fc{padding:0;gap:0;border-radius:14px;overflow:hidden;background:var(--rn-s1)}
+.rn-fh{padding:14px 16px 0}
+.rn-sic{flex:none;width:34px;height:34px;border-radius:50%;background:var(--rn-s2);color:var(--rn-a);display:inline-flex;align-items:center;justify-content:center}
+.rn-ft{padding:12px 16px 0;font-size:20px;font-weight:700;letter-spacing:-.015em}
+.rn-fs{padding:14px 16px 16px;gap:0;grid-template-columns:1.2fr 1fr 1fr}
+.rn-fs>div{padding-left:14px;border-left:1px solid var(--rn-ln)}
+.rn-fs>div:first-child{padding-left:0;border-left:0}
+.rn-fs b{font-size:22px;font-weight:600;letter-spacing:-.01em;font-style:normal}
+.rn-fs b small{font-size:13px;font-weight:500;opacity:.6}
+.rn-fm{aspect-ratio:16/9;border-radius:0;border:0;border-top:1px solid var(--rn-ln);margin:0}
+.rn-fa{display:flex;justify-content:flex-end;padding:4px 8px;border-top:1px solid var(--rn-ln)}
+.rn-fab{width:44px;height:40px;border:0;border-radius:10px;background:transparent;color:inherit;opacity:.65;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.rn-fab:hover{opacity:1;background:var(--rn-s2)}.rn-fab:focus-visible{outline:2px solid var(--rn-a)}
+/* barra inferior */
+.rn-bb{padding:6px 12px max(8px,env(safe-area-inset-bottom))}
+.rn-bbi{max-width:480px;align-items:flex-end;justify-content:space-around}
+.rn-bm{flex:1;font-size:11.5px;min-height:52px;justify-content:center}
+.rn-rec{flex:1;max-width:none;min-height:0;height:auto;background:transparent;color:var(--rn-a);box-shadow:none;font-size:11.5px;font-weight:700;flex-direction:column;gap:3px;padding:0;border-radius:12px}
+.rn-rec:hover{filter:none}
+.rn-rd{width:56px;height:56px;margin-top:-18px;border-radius:50%;background:var(--rn-a);color:#fff;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.35),0 0 0 5px var(--bg)}
+.rn-rec:active .rn-rd{transform:scale(.94)}
+/* detalhe */
+.rn-dc{padding:0;overflow:hidden}
+.rn-dc .rn-fh{padding-top:16px}
+.rn-dtt{padding:12px 16px 0;font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1.2}
+.rn-fs.big{padding-top:16px;padding-bottom:18px}.rn-fs.big b{font-size:28px}
+.rn-dc .rn-dmap{border:0;border-top:1px solid var(--rn-ln);border-radius:0;aspect-ratio:3/2}
+.rn-dh,.rn-dinfo{display:none}
+/* gravação ao vivo */
+.rn-ls{gap:0;text-align:center}
+.rn-tm,.rn-ds{align-items:center;padding:14px 0;border-bottom:1px solid var(--rn-ln);gap:4px}
+.rn-time{font-size:clamp(64px,20vw,112px);font-weight:700;letter-spacing:-.03em}
+.rn-dist b{font-size:clamp(52px,16vw,88px);font-weight:700;font-style:normal;letter-spacing:-.03em}
+.rn-dist small{font-size:20px;font-weight:600;color:inherit;opacity:.6}
+.rn-pc{gap:0}
+.rn-pb{background:transparent;border:0;border-radius:0;padding:14px 0;align-items:center;gap:2px}
+.rn-pb+.rn-pb{border-left:1px solid var(--rn-ln)}
+.rn-pb b{font-size:34px;font-weight:700}.rn-pb small{font-size:12px;opacity:.55;font-weight:600}
+.rn-lm{border-radius:16px;min-height:110px}
+.rn-ctl{gap:clamp(20px,9vw,52px);align-items:center;padding:4px 0 2px}
+.rn-cw{gap:6px}
+.rn-rb.main{width:96px;height:96px;margin-top:0;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+.rn-rb.sm{width:60px;height:60px;margin-top:0;background:transparent;border:2px solid var(--rn-ln)}
+.rn-rb.sm.fin{background:transparent;color:var(--rn-a);border:2px solid var(--rn-a)}
+.rn-live[data-s=pau] .rn-rb.fin,.rn-live[data-s=int] .rn-rb.fin{background:var(--rn-a);color:#fff;box-shadow:none}
+@media(min-width:900px){.rn-lbody{flex-direction:row}.rn-ls{flex:1 1 0;justify-content:center}.rn-lm{flex:1.2 1 0}}
+@media(max-height:620px) and (max-width:719px){.rn-time{font-size:52px}.rn-dist b{font-size:40px}.rn-rb.main{width:72px;height:72px}.rn-rb.sm{width:50px;height:50px}.rn-pb b{font-size:24px}.rn-tm,.rn-ds,.rn-pb{padding:8px 0}}
+
+/* ===== paleta própria da página Corrida (laranja + neutros), independente da cor do tema do Hub ===== */
+body.rn-full{--ac2:#fc4c02;--bg:#0e0e10;--bg2:#0e0e10;--tx:#f2f2f5;--t2:#9a9aa5;--bd:#2c2c31;background:#0e0e10;color:#f2f2f5}
+body.rn-full .rn,body.rn-full .rn-m,body.rn-full .rn-t{--rn-a:#fc4c02;--rn-ok:#2fb344;--rn-s1:#1a1a1d;--rn-s2:#26262a;--rn-ln:#2f2f35}
+:root[data-t=light] body.rn-full{--bg:#fff;--bg2:#fff;--tx:#242428;--t2:#6d6d78;--bd:#dfdfe8;background:#f2f2f6;color:#242428}
+:root[data-t=light] body.rn-full .rn,:root[data-t=light] body.rn-full .rn-m,:root[data-t=light] body.rn-full .rn-t{--rn-s1:#fff;--rn-s2:#eeeef3;--rn-ln:#dfdfe8}
+body.rn-full .rn-dot.e{stroke:#e0342b}
+body.rn-full .rn-fc,body.rn-full .rn-card,body.rn-full .rn-tl{border-radius:12px}
+/* abas do período: sublinhado laranja */
+.rn-seg{background:transparent;border:0;border-bottom:1px solid var(--rn-ln);border-radius:0;padding:0;gap:0}
+.rn-seg button{border-radius:0;border-bottom:3px solid transparent;min-height:46px;font-weight:700;opacity:.6}
+.rn-seg button.on{background:transparent;color:var(--rn-a);border-bottom-color:var(--rn-a);opacity:1}
+.rn-bn.ok .rn-i{color:var(--rn-ok)}
 `;
   document.head.appendChild(st);
 }

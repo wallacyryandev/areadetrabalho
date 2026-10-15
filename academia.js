@@ -286,7 +286,7 @@ return`${UI.h('Progresso')}<div class=gsg role=tablist style="margin-bottom:12px
 const CHEV='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>';
 const menuView=()=>{const n=(typeof S!='undefined'&&S.name)||'Você',ini=esc(String(n).trim().charAt(0).toUpperCase()||'?'),pg=typeof PG!='undefined'?PG:[],L=pg.filter(p=>p[0]!='gym');
 return`<div class=gy><div class=gtop><button class=gear onclick="G.menu(0)" title="Voltar" aria-label="Voltar">${BACK}</button><div class=gt style="flex:1;margin-left:4px">Configurações</div></div>
-<div class=gprof><div class=gav>${ini}</div><div><div class=gpn>${esc(n)}</div><p class=s style="margin:0">Hub Pessoal</p></div></div>
+<div class=gprof><div class=gav>${ini}</div><div><div class=gpn>${esc(n)}</div><p class=s style="margin:0">Arco</p></div></div>
 <div class=s style="margin:0 8px 6px">Ir para</div>
 ${L.map(p=>`<div class=gmi onclick="G.goto('${esc(p[0])}')"><span>${esc(p[2])}</span>${CHEV}</div>`).join('')}</div>`};
 
@@ -295,7 +295,7 @@ ${L.map(p=>`<div class=gmi onclick="G.goto('${esc(p[0])}')"><span>${esc(p[2])}</
 const ck=(k,t)=>`<label class=gck><input type=checkbox ${cf()[k]?'checked':''} onchange="G.ck('${k}',this.checked)">${t}</label>`;
 const nConn=()=>{try{return typeof SY!='undefined'&&SY._conns?Object.values(SY._conns()).filter(c=>c.open&&c.hid).length:0}catch(e){return 0}};
 const aju=()=>{const c=cf(),un=names().filter(n=>!grp(n)),cus=gy().custom||[],nc=nConn();
-return`<h2 style="margin:0 0 4px">Ajustes da Academia</h2><p class=s style="margin:0 0 4px">Preferências só da Academia. Para navegar pelo Hub, use a engrenagem no topo.</p>
+return`<h2 style="margin:0 0 4px">Ajustes da Academia</h2><p class=s style="margin:0 0 4px">Preferências só da Academia. Para navegar pelo Arco, use a engrenagem no topo.</p>
 <div class=gsh>Aparência</div>
 <div class=g2 style="margin-top:0">
 <div class=c>${UI.ct('Aparência e cores')}<div class=row>${Object.keys(PAL).map(k=>`<span class="ch ${c.pal==k?'on':''}" onclick="G.pal('${k}')"><i class=sw style="background:${PAL[k][2]}"></i>${PAL[k][0]}</span>`).join('')}</div><button class="b g sm mt" onclick="G.rv()">Restaurar visual padrão</button></div>
@@ -313,7 +313,7 @@ return`<h2 style="margin:0 0 4px">Ajustes da Academia</h2><p class=s style="marg
 <div class=c>${UI.ct('Exercícios sem grupo muscular')}${un.map((n,i)=>`<label>${esc(n)}<select onchange="G.as(${i},this.value)"><option value="">Escolher grupo…</option>${EGR.map(g=>`<option value=${g}>${LB[g]}</option>`).join('')}</select></label>`).join('')||'<p class=s>Todos os seus exercícios têm grupo associado.</p>'}</div>
 </div>
 <div class=gsh>Sincronização</div>
-<div class=c>${UI.ct('Sincronização entre dispositivos')}<div class=r><span class=f>Conexão</span><b style="color:${navigator.onLine?'var(--ok)':'var(--wn)'}">${navigator.onLine?'Online':'Offline'}</b></div><div class=r><span class=f>Aparelhos conectados agora</span><b>${nc}</b></div><p class=s style="margin:8px 0 0">${navigator.onLine?'Fichas, treinos, favoritos, exercícios e preferências da Academia seguem a mesma sincronização do Hub.':'Sem conexão: as alterações ficam neste aparelho e sincronizam quando ele reconectar.'}</p></div>`};
+<div class=c>${UI.ct('Sincronização entre dispositivos')}<div class=r><span class=f>Conexão</span><b style="color:${navigator.onLine?'var(--ok)':'var(--wn)'}">${navigator.onLine?'Online':'Offline'}</b></div><div class=r><span class=f>Aparelhos conectados agora</span><b>${nc}</b></div><p class=s style="margin:8px 0 0">${navigator.onLine?'Fichas, treinos, favoritos, exercícios e preferências da Academia seguem a mesma sincronização do Arco.':'Sem conexão: as alterações ficam neste aparelho e sincronizam quando ele reconectar.'}</p></div>`};
 
 /* ====== TREINO ATIVO (fluxo existente, sem a navegação da Academia) ====== */
 const act=()=>{const a=S.active;return`<div class="gy act">${UI.h(esc(a.name),`<button class="b g sm" onclick="A.nt()">${UI.i('bell')}Avisos</button>`)}<div class=rest>${UI.i('clock')}<span id=rs>Descanso: pronto</span></div><div class=g2>${a.ex.map((e,i)=>{const L=last(e.n);return`<div class=c>${UI.ct(esc(e.n)+` <span class=s>${e.s}×${e.r}</span>`)}<p class="s lh">${L?'Última sessão ('+fdt(L.date)+'): '+sets(L.sets):'Sem sessão anterior.'}</p>${e.sets.map((x,j)=>{const p=L&&L.sets[j],df=p?x.l-p.l:null;return`<div class=r><span class=f>Série ${j+1}</span><span>${fw(x.l)} × ${x.r} reps</span>${df==null?'':`<span class=s style="color:${df>0?'var(--ok)':df<0?'var(--er)':''}">${df>0?'+':''}${cu(df)} ${cf().un}</span>`}</div>`}).join('')}<div class="row mt"><input id=l${i} type=number placeholder="${L&&L.sets[e.sets.length]?L.sets[e.sets.length].l+' kg':'kg'}" class=in-s><input id=r${i} type=number placeholder="reps" value=${e.r} class=in-s><button class="b sm" onclick="A.gs(${i})">${UI.i('check')}Concluir série</button></div></div>`}).join('')}</div><div class="row mt"><button class=b onclick="A.wf()">Finalizar treino</button><button class="b g" onclick="A.wc()">Cancelar</button></div></div>`};
