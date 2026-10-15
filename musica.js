@@ -944,6 +944,13 @@ on('timeupdate',()=>{
 on('ended',()=>{
   if(pre){handoff();return}
   const q=qOf(ctx),p=q.indexOf(cur);
+  /* Faixa avulsa: a fila é a biblioteca inteira, começando pela próxima música
+     após a faixa atual. Não encerra a reprodução só porque ela foi iniciada fora de uma playlist. */
+  if(ctx===null&&!shuf){
+    if(cur>=0&&cur<T.length-1){play(cur+1,1,null);return}
+    if(rep&&T.length){play(0,1,null);return}
+    keep(0);draw();bcast();return;
+  }
   if(q.length>1&&(shuf||p<q.length-1))next();
   else if(rep&&q.length)play(q[0]);
   else{keep(0);draw();bcast()}
