@@ -1,6 +1,17 @@
 /* cinema.js — ARCO Cinema 2.0: biblioteca de filmes com ARQUIVOS LOCAIS (IndexedDB) + reprodutor integrado.
    Integra com o ARCO como o antigo cinema.js: registra a página em PG/P e usa S, sv(), RD(), esc(), $ e uid() do ARCO.
 
+   CORREÇÃO (seletor de arquivos)
+   - Causa: o campo de vídeo usava accept="video/*,..." e, no Android/iOS, um accept composto só por tipos de mídia faz o navegador
+     abrir o seletor de GALERIA (fotos/vídeos da galeria), não o gerenciador de arquivos (Downloads, Drive do aparelho, cartão SD).
+     O campo ficava dentro de um <input hidden> (display:none), o que também é menos confiável em alguns navegadores móveis.
+   - Correção: (1) o campo de vídeo continua com accept="video/*,.mp4,.webm,.m4v,..." (nunca image/*); (2) foi adicionado um segundo
+     caminho, "Procurar em todos os arquivos", que abre o seletor de arquivos do sistema sem filtro de mídia; (3) o arquivo escolhido
+     é validado pelo tipo, pela extensão E pela assinatura binária (magic bytes) antes de importar, e depois pela decodificação real
+     (probe); imagens e arquivos que não são vídeo são recusados com mensagem clara; (4) a capa continua em um seletor separado
+     (accept="image/*"); (5) links de compartilhamento do Google Drive deixam de ser tratados como arquivo de vídeo.
+   - Google Drive: NÃO há integração com o Drive neste módulo. Veja a nota em "GOOGLE DRIVE" mais abaixo.
+
    DADOS
    - Metadados (leves, exportáveis): S.cine = { movies:[], prog:{id:{t,d,u,done}}, seen:{id:ts} }  (mesmo formato de antes;
      campos novos por filme: fileName, fileSize, fileType, hasCover). Entram no Exportar/Importar do ARCO.
@@ -16,6 +27,19 @@
      no aparelho de origem para levar o vídeo manualmente).
    - Para o futuro (servidor/nuvem) existe um ponto de extensão sem API inventada: window.ARCO_CINEMA_SYNC.register(adapter).
      Veja o bloco "SINCRONIZAÇÃO FUTURA" mais abaixo. Sem adapter registrado, nada é enviado para fora do aparelho.
+
+   GOOGLE DRIVE (não implementado)
+   - Não existe integração real com o Drive aqui, e nenhuma credencial é simulada. Uma URL de compartilhamento do Drive
+     (drive.google.com/file/d/…/view) é uma PÁGINA HTML, não um arquivo de vídeo: não toca em <video> e é recusada com aviso.
+   - Hoje: baixe o vídeo do Drive para o aparelho (app Drive → Baixar / “Disponibilizar offline” e salvar em Downloads) e escolha
+     o arquivo pelo botão “Procurar em todos os arquivos”.
+   - Para integrar de verdade seriam necessários: (a) um projeto no Google Cloud com a Drive API ativada; (b) tela de consentimento
+     OAuth 2.0 e um OAuth Client ID do tipo Web (origens autorizadas = o domínio do ARCO); (c) autenticação com Google Identity
+     Services (token client) pedindo o escopo mínimo https://www.googleapis.com/auth/drive.file (ou drive.readonly, que é
+     “restrito” e exige verificação do app); (d) o Google Picker API (com chave de API restrita ao domínio) para o usuário escolher
+     os vídeos; (e) baixar o conteúdo com files.get?alt=media + header Authorization: Bearer <token> (os binários vêm por fetch,
+     em pedaços com Range, e entram no mesmo Store.put do IndexedDB); (f) tratamento de CORS, expiração do token e cotas.
+     Sem esses componentes (ou um backend próprio), não é possível ler o Drive de dentro do navegador.
 
    Use apenas conteúdo próprio, de domínio público ou que você tenha autorização para reproduzir. */
 (() => {
@@ -123,6 +147,9 @@
 #md .box.cn-form textarea{height:auto;padding:10px 12px;line-height:1.4;resize:vertical}
 #md .box.cn-form input:focus,#md .box.cn-form textarea:focus{border-color:#fff}
 #md .box.cn-form small{font-weight:400;color:#9a9a9a}
+/* campo de arquivo invisível mas "clicável" (mais confiável em navegadores móveis do que display:none/hidden) */
+#md .box.cn-form .cn-vh{position:absolute!important;width:1px!important;height:1px!important;margin:-1px!important;padding:0!important;border:0!important;opacity:0!important;overflow:hidden;clip:rect(0 0 0 0);pointer-events:none}
+.cn-any{margin:-4px 0 12px;font-size:12.5px;line-height:1.5;color:#9a9a9a}
 .cn-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .cn-drop{display:flex;flex-direction:column;align-items:center;gap:4px;padding:18px 12px;margin:0 0 12px;text-align:center;border:2px dashed #555;border-radius:10px;background:#222;cursor:pointer;color:#fff;transition:border-color .15s,background .15s}
 .cn-drop:hover,.cn-drop.dr{border-color:var(--cn-red);background:#2b1517}
@@ -317,6 +344,25 @@ html.cn-lock{overflow:hidden}
   const guessType = n => MIME[extOf(n)] || 'video/mp4';
   const isVideo = f => /^video\//.test(f.type || '') || !!MIME[extOf(f.name)];
   const nameToTitle = n => String(n || '').replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+
+  /* Accept do seletor de VÍDEO (nunca image/*). A capa usa um seletor próprio, separado. */
+  const VIDEO_ACCEPT = 'video/*,.mp4,.webm,.m4v,.ogv,.mov,.mkv,.3gp';
+
+  /* Valida o conteúdo real do arquivo pelos primeiros bytes (assinatura), sem confiar só em nome/tipo.
+     Devolve 'video', 'image', 'other' (ex.: HTML/PDF/texto) ou '' (não reconhecido). */
+  const sniff = async f => {
+    let b;
+    try { b = new Uint8Array(await f.slice(0, 200).arrayBuffer()); } catch (e) { return ''; }
+    if (b.length < 4) return '';
+    const s = (o, t) => b.length >= o + t.length && t.split('').every((c, i) => b[o + i] === c.charCodeAt(0));
+    const h = (...a) => a.every((x, i) => b[i] === x);
+    if (h(0xFF, 0xD8, 0xFF) || h(0x89, 0x50, 0x4E, 0x47) || s(0, 'GIF8') || s(0, 'BM') || (s(0, 'RIFF') && s(8, 'WEBP')) || h(0x49, 0x49, 0x2A, 0x00) || h(0x4D, 0x4D, 0x00, 0x2A)) return 'image';
+    if (s(4, 'ftyp')) { const br = String.fromCharCode(b[8], b[9], b[10], b[11]); return /^(heic|heix|heim|heis|mif1|msf1|avif)/.test(br) ? 'image' : 'video'; }
+    if (h(0x1A, 0x45, 0xDF, 0xA3) || s(0, 'OggS') || (s(0, 'RIFF') && s(8, 'AVI ')) || h(0x30, 0x26, 0xB2, 0x75) || s(0, 'FLV') || h(0x00, 0x00, 0x01, 0xBA) || h(0x00, 0x00, 0x01, 0xB3)) return 'video';
+    if (b[0] === 0x47 && b[188] === 0x47) return 'video';
+    if (s(0, '%PDF') || s(0, 'PK') || s(0, '<!') || s(0, '<ht') || s(0, '<?x') || s(0, '{') || s(0, 'ID3')) return 'other';
+    return '';
+  };
 
   /* mensagens compreensíveis para falhas de armazenamento/arquivo */
   const CANCEL = Object.assign(new Error('cancel'), { name: 'Cancel' });
@@ -529,12 +575,15 @@ html.cn-lock{overflow:hidden}
   };
 
   /* ================= compatibilidade com cadastros antigos (link externo) ================= */
+  const isDriveHost = h => /(^|\.)(drive\.google\.com|docs\.google\.com|drive\.usercontent\.google\.com)$/i.test(h || '');
   const classify = raw => {
     raw = String(raw || '').trim();
     if (!raw) return { k: 'invalid', why: 'Este filme não tem arquivo nem link de vídeo.' };
     let u;
     try { u = new URL(raw, location.href); } catch (e) { return { k: 'invalid', why: 'O link do vídeo não é uma URL válida.' }; }
     if (!/^https?:$/.test(u.protocol)) return { k: 'invalid', why: 'Só links http:// ou https:// são aceitos.' };
+    /* Link de compartilhamento do Google Drive = página HTML, não arquivo de vídeo. Não há integração real com o Drive. */
+    if (isDriveHost(u.hostname)) return { k: 'invalid', why: 'Este é um link do Google Drive. Ele abre uma página, não é um arquivo de vídeo reproduzível, e o ARCO não tem integração com o Drive. Baixe o vídeo para este aparelho e importe o arquivo (Editar → Procurar em todos os arquivos).' };
     const ext = (u.pathname.toLowerCase().match(/\.([a-z0-9]{2,5})$/) || [])[1] || '';
     if (/^(html?|php|aspx?|jsp)$/.test(ext)) return { k: 'invalid', why: 'O link aponta para uma página, não para um arquivo de vídeo. Importe o arquivo do vídeo neste aparelho.' };
     return { k: ext === 'm3u8' ? 'hls' : 'file', u: u.href, mixed: location.protocol === 'https:' && u.protocol === 'http:' };
@@ -655,7 +704,7 @@ html.cn-lock{overflow:hidden}
   const infoLine = m => {
     const L = [];
     if (hasLocal(m.id)) L.push(`Arquivo guardado neste aparelho: ${esc(m.fileName || 'vídeo')} · ${fmtSize(FSZ.get(m.id) || m.fileSize)}`);
-    else if (m.url) L.push(`Cadastro antigo com link externo (${esc(host(m.url))}). Para não depender do link, edite o filme e importe o arquivo.`);
+    else if (m.url) L.push(isDriveHost(host(m.url)) ? `Cadastro com link do Google Drive (${esc(host(m.url))}). Esse link não toca como vídeo. Edite o filme e importe o arquivo baixado.` : `Cadastro antigo com link externo (${esc(host(m.url))}). Para não depender do link, edite o filme e importe o arquivo.`);
     else if (m.fileName) L.push(`O arquivo “${esc(m.fileName)}” (${fmtSize(m.fileSize)}) não está neste aparelho. Use “Anexar arquivo” e escolha o mesmo vídeo.`);
     return L.length ? `<p class="cn-src">${L.join('<br>')}</p>` : '';
   };
@@ -709,13 +758,15 @@ html.cn-lock{overflow:hidden}
 ${attachMode && m && !had ? `<div class="cn-fm wa">Este filme não tem arquivo neste aparelho. Escolha o arquivo de vídeo abaixo.</div>` : ''}
 ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (cadastro antigo). Escolha o arquivo de vídeo para passar a tocá-lo daqui, sem depender do link.</div>` : ''}
 <label>Título *<input name="title" maxlength="140" value="${esc(v.title)}" required></label>
-<label class="cn-drop" id="cn-drop" tabindex="0" role="button" aria-label="Escolher arquivo de vídeo">${IC.up}<b id="cn-fn">${had ? 'Trocar o arquivo de vídeo' : 'Escolher arquivo de vídeo'}</b><small id="cn-fi">${had ? esc(v.fileName || '') + ' · ' + fmtSize(FSZ.get(v.id) || v.fileSize) + ' (mantido se você não escolher outro)' : 'MP4, WebM, MOV e outros formatos que o navegador reproduz. Fica guardado só neste aparelho.'}</small><input type="file" name="video" accept="video/*,.mp4,.m4v,.webm,.ogv,.mov,.mkv" hidden></label>
-<div class="cn-cvrow"><div class="cn-cvp" id="cn-cvp">sem capa</div><div><label class="cn-btn g sm" style="margin:0 6px 6px 0">Escolher capa<input type="file" name="cover" accept="image/*" hidden></label><button type="button" class="cn-btn g sm" id="cn-cvx" hidden>Remover capa</button><br><small>Sem capa, usamos um quadro do vídeo.</small></div></div>
+<label class="cn-drop" id="cn-drop" tabindex="0" role="button" aria-label="Escolher arquivo de vídeo">${IC.up}<b id="cn-fn">${had ? 'Trocar o arquivo de vídeo' : 'Escolher arquivo de vídeo'}</b><small id="cn-fi">${had ? esc(v.fileName || '') + ' · ' + fmtSize(FSZ.get(v.id) || v.fileSize) + ' (mantido se você não escolher outro)' : 'MP4, WebM, M4V, MOV e outros formatos que o navegador reproduz. Fica guardado só neste aparelho.'}</small><input type="file" name="video" class="cn-vh" accept="${VIDEO_ACCEPT}"></label>
+<p class="cn-any">No celular, este botão pode abrir só a galeria de fotos e vídeos. Se o seu filme está em Downloads, no cartão ou baixado do Google Drive, <button type="button" class="cn-lk" id="cn-any">procure em todos os arquivos</button>. O ARCO não se conecta ao Google Drive: baixe o vídeo para o aparelho primeiro.</p>
+<input type="file" name="videoany" class="cn-vh" tabindex="-1" aria-hidden="true">
+<div class="cn-cvrow"><div class="cn-cvp" id="cn-cvp">sem capa</div><div><label class="cn-btn g sm" style="margin:0 6px 6px 0">Escolher capa (imagem)<input type="file" name="cover" class="cn-vh" accept="image/*"></label><button type="button" class="cn-btn g sm" id="cn-cvx" hidden>Remover capa</button><br><small>Sem capa, usamos um quadro do vídeo.</small></div></div>
 <label>Descrição<textarea name="synopsis" rows="4" maxlength="3000">${esc(v.synopsis)}</textarea></label>
 <div class="cn-two"><label>Ano de lançamento<input name="year" type="number" inputmode="numeric" min="1888" max="2100" step="1" value="${v.year ? esc(v.year) : ''}"></label><label>Duração <small>(preenche sozinha)</small><input name="dur" placeholder="1h45" value="${v.dur ? esc(fmtDur(v.dur).replace(/ /g, '')) : ''}"></label></div>
 <label>Categoria(s) <small>separe por vírgula</small><input name="genres" value="${esc(gen(v).join(', '))}"></label>
 <div class="cn-gsug" id="cn-gsug">${GENRES.map(g => `<button type="button" class="cn-chip" data-gs="${esc(g)}">${esc(g)}</button>`).join('')}</div>
-<label>Legendas <small>(opcional — arquivos .vtt ou .srt)</small><input type="file" name="subs" accept=".vtt,.srt,text/vtt" multiple style="margin-top:5px;color:#ccc"></label>
+<label>Legendas <small>(opcional — arquivos .vtt ou .srt)</small><input type="file" name="subs" accept=".vtt,.srt,text/vtt,application/x-subrip,text/plain" multiple style="margin-top:5px;color:#ccc"></label>
 <div id="cn-sl" style="font-size:12.5px;color:#9a9a9a;margin:-6px 0 12px"></div>
 <label class="cn-ck"><input type="checkbox" name="feat"${v.feat ? ' checked' : ''}><span>Mostrar em Destaques ★</span></label>
 <label class="cn-ck"><input type="checkbox" name="rights"${v.rights ? ' checked' : ''}><span>Confirmo que este conteúdo é meu, é de domínio público ou tenho autorização para reproduzi-lo.</span></label>
@@ -741,10 +792,15 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
     if (safeUrl(v.cover)) showCover(safeUrl(v.cover));
     else if (v.hasCover) getCov(v.id).then(u => { if (u && !ch.cover && !ch.delCover) showCover(u); });
 
+    /* Validação do arquivo de vídeo: tipo MIME + extensão + assinatura binária; depois decodificação real (probe). */
     const pick = async f => {
       msg('');
-      if (!isVideo(f)) { msg('Esse arquivo não parece ser um vídeo. Escolha MP4, WebM, MOV ou outro formato de vídeo.'); return; }
       if (!f.size) { msg('O arquivo está vazio.'); return; }
+      if (/^image\//.test(f.type || '')) { msg('Esse arquivo é uma imagem, não um vídeo. Para a capa use “Escolher capa”. Para o filme, escolha MP4, WebM, M4V, MOV ou outro vídeo.'); return; }
+      const kind = await sniff(f);
+      if (kind === 'image') { msg('O conteúdo desse arquivo é uma imagem, não um vídeo. Para a capa use “Escolher capa”.'); return; }
+      if (kind === 'other') { msg('Esse arquivo não é um vídeo (parece um documento, página ou áudio). Se veio de um link do Google Drive, baixe o vídeo de verdade para o aparelho.'); return; }
+      if (!isVideo(f) && kind !== 'video') { msg('Não consegui reconhecer esse arquivo como vídeo. Escolha MP4, WebM, M4V, MOV ou outro formato de vídeo.'); return; }
       ch.video = f; ch.probe = null; setDrop('busy', f);
       if (!val('title')) el('title').value = nameToTitle(f.name);
       try {
@@ -756,16 +812,19 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
         if (m && v.fileSize && f.size !== v.fileSize && attachMode) msg('Atenção: este arquivo tem tamanho diferente do original (' + fmtSize(v.fileSize) + '). Se for outra versão, o ponto salvo pode não coincidir.', 'wa');
       } catch (e) { if (ch.video !== f) return; ch.video = null; const t = probeMsg(e); setDrop('err', null, null, t); msg(t); }
     };
-    el('video').addEventListener('change', () => { const f = el('video').files[0]; el('video').value = ''; if (f) pick(f); });
+    /* dois caminhos para o mesmo fluxo: seletor com filtro de vídeo e seletor geral de arquivos */
+    ['video', 'videoany'].forEach(n => el(n).addEventListener('change', () => { const f = el(n).files[0]; el(n).value = ''; if (f) pick(f); }));
+    q('#cn-any').onclick = () => { if (!busy) el('videoany').click(); };
     const dz = q('#cn-drop');
     dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el('video').click(); } });
     ['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('dr'); }));
     ['dragleave', 'drop'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.remove('dr'); }));
     dz.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) pick(f); });
-    el('cover').addEventListener('change', () => {
+    el('cover').addEventListener('change', async () => {
       const f = el('cover').files[0]; el('cover').value = '';
       if (!f) return;
-      if (!/^image\//.test(f.type)) { msg('A capa precisa ser uma imagem (JPG, PNG, WebP…).'); return; }
+      const kind = await sniff(f);
+      if (!/^image\//.test(f.type) && kind !== 'image') { msg('A capa precisa ser uma imagem (JPG, PNG, WebP…).'); return; }
       ch.cover = f; ch.delCover = false; const u = URL.createObjectURL(f); FU.push(u); showCover(u); msg('');
     });
     q('#cn-cvx').onclick = () => { ch.cover = null; ch.delCover = true; showCover(''); };
