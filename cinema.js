@@ -1,6 +1,13 @@
 /* cinema.js — ARCO Cinema 2.0: biblioteca de filmes com ARQUIVOS LOCAIS (IndexedDB) + reprodutor integrado.
    Integra com o ARCO como o antigo cinema.js: registra a página em PG/P e usa S, sv(), RD(), esc(), $ e uid() do ARCO.
 
+   REFORMULAÇÃO VISUAL (esta versão)
+   - O catálogo (.cn-root) agora é uma camada independente, position:fixed em tela cheia (mesmo padrão do player #cnp, que já vive
+     fora do fluxo do layout). Ela cobre a barra de navegação global e as colunas laterais do ARCO SEM escondê-las e SEM tocar em
+     body/header/nav/aside: em qualquer outra página a camada simplesmente não existe, então o ARCO continua igual.
+   - Navegação própria do Cinema: botão redondo "voltar ao ARCO" (CN.exit) + título + "Adicionar filme".
+   - Nenhuma alteração na lógica JS, IndexedDB, importação, sincronização ou player.
+
    CORREÇÃO (seletor de arquivos)
    - Causa: o campo de vídeo usava accept="video/*,..." e, no Android/iOS, um accept composto só por tipos de mídia faz o navegador
      abrir o seletor de GALERIA (fotos/vídeos da galeria), não o gerenciador de arquivos (Downloads, Drive do aparelho, cartão SD).
@@ -259,6 +266,52 @@ html.cn-lock{overflow:hidden}
 #cnp .cn-bt svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #cnp .cn-bts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:4px}
 @media(prefers-reduced-motion:reduce){#cnp .cn-spin{animation-duration:2.5s}.cn-cv,.cn-prb b{transition:none}}
+/* ===== ARCO Cinema: camada independente estilo streaming ===== */
+.cn-root{--px:clamp(16px,4vw,56px);position:fixed;inset:0;z-index:15;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;min-height:0;margin:0;padding:0 0 40px;border-radius:0;background:#0b0b0b;font-family:"Netflix Sans","Helvetica Neue",Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+.cn-root #cn-res{display:contents}
+.cn-hd{order:0;position:sticky;top:0;z-index:6;margin:0;padding:max(12px,env(safe-area-inset-top)) var(--px) 12px;background:linear-gradient(#000 0,#000c 70%,#0000);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.cn-brand{display:inline-flex;align-items:center;gap:12px;min-width:0}
+.cn-hd h1{font-size:clamp(20px,4.6vw,28px);font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.cn-hd h1 b{letter-spacing:.14em}
+.cn-root #cn-live,.cn-root>.cn-bn{order:0;margin:12px var(--px) 0}
+.cn-hero{order:1;border-radius:0;margin:0;min-height:clamp(440px,76vh,740px)}
+.cn-hx{max-width:min(660px,100%);padding:clamp(20px,4vw,56px) var(--px)}
+.cn-ht{font-size:clamp(32px,6vw,68px)}
+.cn-hp{right:var(--px);top:9%;height:76%;border-radius:10px}
+.cn-hb::after{background:linear-gradient(90deg,#0b0b0bf2 8%,#0b0b0b80 58%,#0b0b0b1a),linear-gradient(0deg,#0b0b0b 0,#0000 38%)}
+.cn-hero.full{min-height:clamp(480px,78vh,760px)}
+.cn-bar{order:2;margin:20px var(--px) 12px}
+.cn-search{max-width:440px;height:42px;border-radius:999px;background:#ffffff12;padding:0 16px}
+.cn-chips{order:2;margin:0 var(--px) 4px}
+.cn-count{order:3;margin:18px var(--px) 12px}
+.cn-root #cn-res>.cn-grid{order:3;margin:0 var(--px)}
+.cn-root #cn-res>.cn-bn{order:3;margin:0 var(--px)}
+.cn-sec{order:3;margin-top:26px}
+.cn-sec h2{margin:0 var(--px);font-size:clamp(17px,2.4vw,22px);letter-spacing:-.01em}
+.cn-row{gap:10px;padding:16px var(--px) 28px;scroll-padding-left:var(--px)}
+.cn-row>.cn-card{width:clamp(132px,15vw,200px)}
+.cn-sec>.cn-grid{margin:12px var(--px) 0}
+.cn-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(130px,15vw,190px),1fr));gap:22px 12px}
+.cn-cv{border-radius:8px}
+.cn-cv::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 0 #fff;background:linear-gradient(0deg,#000a,#0000 45%);opacity:0;transition:opacity .18s,box-shadow .18s;pointer-events:none}
+.cn-card:hover .cn-cv::after,.cn-card:focus-visible .cn-cv::after{opacity:1;box-shadow:inset 0 0 0 2px #ffffffd0}
+.cn-card:hover .cn-cv{transform:scale(1.08)}
+.cn-ar{width:var(--px);min-width:40px;top:16px;bottom:28px}
+.cn-root>.cn-sy,.cn-root>.cn-src,.cn-root>.cn-empty{order:4}
+.cn-sy{margin:30px var(--px) 0}
+.cn-src{margin:16px var(--px) 0}
+.cn-empty{margin:24px auto 0;width:calc(100% - 2*var(--px))}
+@media(max-width:640px){
+ .cn-hero,.cn-hero.full{min-height:max(72vh,430px)}
+ .cn-hp{height:44%;top:8%;opacity:.5}
+ .cn-hd .cn-btn{padding:0 14px;min-height:38px;font-size:14px}
+ .cn-row>.cn-card{width:118px}
+}
+/* player: ocupa a tela toda, sem deixar a coluna do ARCO visível */
+#cnp{left:0}
+/* formulários no mesmo padrão */
+#md .box.cn-form{background:#141414;border-color:#2a2a2a;border-radius:10px;box-shadow:0 30px 80px #000c}
+#md .box.cn-form h3{font-weight:800;letter-spacing:-.01em}
 `;
     document.head.appendChild(css);
   }
@@ -695,7 +748,7 @@ html.cn-lock{overflow:hidden}
   const stateBanner = () => hasState === 'load' ? '<div class="cn-bn" role="status">Carregando sua biblioteca local…</div>'
     : hasState === 'err' ? `<div class="cn-bn er" role="alert"><b>Armazenamento local indisponível.</b> ${esc(hasErr)} Filmes com link antigo continuam funcionando, mas não é possível importar ou tocar arquivos locais.</div>` : '';
   const emptyView = () => `<div class="cn-empty">${IC.film}<h2>Sua biblioteca está vazia</h2><p>Adicione filmes escolhendo os arquivos de vídeo do seu computador ou celular. Eles ficam guardados neste aparelho, tocam sem internet e não dependem de links. O progresso é salvo automaticamente.</p><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar o primeiro filme</button><p style="margin:14px 0 0;font-size:12.5px">Use apenas filmes próprios, de domínio público ou que você tenha autorização para reproduzir.</p></div>`;
-  const head = () => `<div class="cn-hd"><h1><b>ARCO</b> Cinema</h1><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar filme</button></div><div id="cn-live" class="cn-bn" role="status" hidden></div>`;
+  const head = () => `<div class="cn-hd"><span class="cn-brand"><button type="button" class="cn-ib" onclick="CN.exit()" aria-label="Sair do Cinema e voltar ao ARCO" title="Voltar ao ARCO">${IC.left}</button><h1><b>ARCO</b> Cinema</h1></span><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar filme</button></div><div id="cn-live" class="cn-bn" role="status" hidden></div>`;
   const catalog = () => {
     if (!list().length) return `<div class="cn-root">${head()}${stateBanner()}${emptyView()}<p class="cn-sy" id="cn-stor"></p><p class="cn-sy" id="cn-sy">${syLine()}</p></div>`;
     if (st.sy) { const y = st.sy; st.sy = 0; setTimeout(() => window.scrollTo(0, y), 0); }
@@ -941,6 +994,8 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
       st.v = 'home'; render();
     },
     add() { openForm(null); },
+    /* sai do Cinema e volta para a primeira página do ARCO (a camada do Cinema só existe na página 'cin') */
+    exit() { try { const h = PG.find(p => p[0] !== 'cin'); go(h ? h[0] : 'home'); } catch (e) {} },
     edit(id, attach) { const m = mv(id); if (m) openForm(m, attach); },
     del(id) { const m = mv(id); if (m && askDel(m)) doDel(id); },
     feat(id) { const m = mv(id); if (m) { m.feat = !m.feat; m.u = Date.now(); persist(); bcast({ t: 'ci-b', m: [m] }); hook('movieChanged', JSON.parse(JSON.stringify(m))); RD(); } },
