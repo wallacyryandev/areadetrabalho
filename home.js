@@ -6,6 +6,7 @@
 
   /* ---------- ícones (traço, estilo da referência) ---------- */
   const I = {
+    cin: '<rect x="2.5" y="4.5" width="19" height="15" rx="3"/><path d="m10 9 5 3-5 3z"/>',
     est: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
     tar: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
     age: '<rect x="3.5" y="4.5" width="17" height="16.5" rx="3"/><path d="M8 2.5v4M16 2.5v4M3.5 10h17M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01M16 17.5h.01"/>',

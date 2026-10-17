@@ -1,6 +1,6 @@
 /* Hub Pessoal - sw.js: abre sem internet (cache) + notificações do sistema no Android/Chrome */
-const CACHE='hub-v8';
-const FILES=['./','index.html','index.js','musica.js','extras.js','corrida.js','financas.js','clima.js','carspot-data.js','carspot.js','home.js','manifest.json','icon-192.png','icon-512.png','icon-180.png','icon-maskable-512.png','favicon.ico','favicon-32.png','bg-home.jpg','bg-home-light.jpg'];
+const CACHE='hub-v9';
+const FILES=['./','index.html','index.js','musica.js','extras.js','corrida.js','financas.js','clima.js','cinema.js','carspot-data.js','carspot.js','home.js','manifest.json','icon-192.png','icon-512.png','icon-180.png','icon-maskable-512.png','favicon.ico','favicon-32.png','bg-home.jpg','bg-home-light.jpg'];
 
 self.addEventListener('install',e=>{
   self.skipWaiting();
@@ -13,7 +13,7 @@ self.addEventListener('activate',e=>e.waitUntil(
 /* Com internet: pega a versão nova e atualiza o cache. Sem internet (ou rede lenta, 4s): usa o cache. */
 self.addEventListener('fetch',e=>{
   const r=e.request;
-  if(r.method!='GET'||new URL(r.url).origin!=location.origin)return;
+  if(r.method!='GET'||new URL(r.url).origin!=location.origin||r.destination=='video')return; /* video (Range/arquivos grandes): direto da rede, sem cache */
   const fromCache=()=>caches.match(r,{ignoreSearch:true}).then(m=>m||(r.mode=='navigate'?caches.match('./'):null));
   const net=fetch(r).then(res=>{
     if(res&&res.status==200&&res.type=='basic'){const cp=res.clone();caches.open(CACHE).then(c=>c.put(r,cp)).catch(()=>{})}
