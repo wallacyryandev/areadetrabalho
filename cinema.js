@@ -1,23 +1,19 @@
 /* cinema.js — ARCO Cinema 2.0: biblioteca de filmes com ARQUIVOS LOCAIS (IndexedDB) + reprodutor integrado.
    Integra com o ARCO como o antigo cinema.js: registra a página em PG/P e usa S, sv(), RD(), esc(), $ e uid() do ARCO.
 
-   REFORMULAÇÃO VISUAL (esta versão)
-   - O catálogo (.cn-root) agora é uma camada independente, position:fixed em tela cheia (mesmo padrão do player #cnp, que já vive
-     fora do fluxo do layout). Ela cobre a barra de navegação global e as colunas laterais do ARCO SEM escondê-las e SEM tocar em
-     body/header/nav/aside: em qualquer outra página a camada simplesmente não existe, então o ARCO continua igual.
-   - Navegação própria do Cinema: botão redondo "voltar ao ARCO" (CN.exit) + título + "Adicionar filme".
-   - Nenhuma alteração na lógica JS, IndexedDB, importação, sincronização ou player.
-
-   CORREÇÃO (seletor de arquivos)
-   - Causa: o campo de vídeo usava accept="video/*,..." e, no Android/iOS, um accept composto só por tipos de mídia faz o navegador
-     abrir o seletor de GALERIA (fotos/vídeos da galeria), não o gerenciador de arquivos (Downloads, Drive do aparelho, cartão SD).
-     O campo ficava dentro de um <input hidden> (display:none), o que também é menos confiável em alguns navegadores móveis.
-   - Correção: (1) o campo de vídeo continua com accept="video/*,.mp4,.webm,.m4v,..." (nunca image/*); (2) foi adicionado um segundo
-     caminho, "Procurar em todos os arquivos", que abre o seletor de arquivos do sistema sem filtro de mídia; (3) o arquivo escolhido
-     é validado pelo tipo, pela extensão E pela assinatura binária (magic bytes) antes de importar, e depois pela decodificação real
-     (probe); imagens e arquivos que não são vídeo são recusados com mensagem clara; (4) a capa continua em um seletor separado
-     (accept="image/*"); (5) links de compartilhamento do Google Drive deixam de ser tratados como arquivo de vídeo.
-   - Google Drive: NÃO há integração com o Drive neste módulo. Veja a nota em "GOOGLE DRIVE" mais abaixo.
+   CORREÇÃO DE REPRODUÇÃO (esta versão)
+   - Sintoma: o catálogo/detalhe do filme aparecia (título, capa, ano, descrição), mas o vídeo não era visto nem tocado.
+   - Causa mais provável encontrada na análise: EMPILHAMENTO (z-index). Desde a reformulação visual, o catálogo (.cn-root) é uma camada
+     position:fixed com z-index:15, mas o reprodutor (#cnp) continuava com z-index:20. Os dois ficam em contextos de empilhamento
+     diferentes (o catálogo mora dentro de #mn, o player no <body>). Se qualquer ancestral de #mn do ARCO criar um contexto de
+     empilhamento com z-index maior que 20 (header/wrapper com z-index, transform, filter, etc.), o catálogo passa a ficar POR CIMA do
+     player: o vídeo é carregado e até toca (com som), mas a tela mostra só a página de informações do filme.
+     Correção: (1) #cnp agora usa z-index máximo; (2) enquanto o player está aberto, o catálogo é escondido (html.cn-lock .cn-root
+     {visibility:hidden}), então nada pode ficar na frente do vídeo; (3) o <video> ganhou regras defensivas contra CSS global do ARCO.
+   - Endurecimento do caminho de leitura: o Blob recuperado do IndexedDB recebe um MIME que o navegador realmente aceita (ex.: .mov/.m4v
+     passam a ser entregues como video/mp4), o <video> chama load() explicitamente, há um timeout também para arquivos locais, os erros
+     de decodificação mostram código/mensagem do navegador, e CN.diag() (console) lista filme → registro → pedaços → Blob.
+   - Nada mais foi alterado: catálogo, capas, formulários, importação em pedaços, sincronização e demais funções seguem iguais.
 
    DADOS
    - Metadados (leves, exportáveis): S.cine = { movies:[], prog:{id:{t,d,u,done}}, seen:{id:ts} }  (mesmo formato de antes;
@@ -28,25 +24,15 @@
    - Filmes cadastrados na versão antiga (campo url) continuam tocando pelo link; novos filmes NÃO usam link.
 
    SINCRONIZAÇÃO
-   - IndexedDB/localStorage NÃO sincronizam entre aparelhos. O que já existia continua: metadados e progresso trafegam pelo
-     canal de aparelhos pareados do Hub (SY). Os ARQUIVOS DE VÍDEO NÃO trafegam: ficam só no aparelho onde foram importados.
-     Num aparelho que recebeu só os metadados o filme aparece como "Sem arquivo" e dá para anexar o arquivo (ou usar "Baixar arquivo"
-     no aparelho de origem para levar o vídeo manualmente).
-   - Para o futuro (servidor/nuvem) existe um ponto de extensão sem API inventada: window.ARCO_CINEMA_SYNC.register(adapter).
-     Veja o bloco "SINCRONIZAÇÃO FUTURA" mais abaixo. Sem adapter registrado, nada é enviado para fora do aparelho.
+   - IndexedDB/localStorage NÃO sincronizam entre aparelhos. Metadados e progresso trafegam pelo canal de aparelhos pareados do Hub (SY).
+     Os ARQUIVOS DE VÍDEO NÃO trafegam: ficam só no aparelho onde foram importados. Num aparelho que recebeu só os metadados o filme
+     aparece como "Sem arquivo" e dá para anexar o arquivo (ou usar "Baixar arquivo" no aparelho de origem).
+   - Ponto de extensão futuro: window.ARCO_CINEMA_SYNC.register(adapter) (veja "SINCRONIZAÇÃO FUTURA"). Sem adapter, nada sai do aparelho.
 
    GOOGLE DRIVE (não implementado)
-   - Não existe integração real com o Drive aqui, e nenhuma credencial é simulada. Uma URL de compartilhamento do Drive
-     (drive.google.com/file/d/…/view) é uma PÁGINA HTML, não um arquivo de vídeo: não toca em <video> e é recusada com aviso.
-   - Hoje: baixe o vídeo do Drive para o aparelho (app Drive → Baixar / “Disponibilizar offline” e salvar em Downloads) e escolha
-     o arquivo pelo botão “Procurar em todos os arquivos”.
-   - Para integrar de verdade seriam necessários: (a) um projeto no Google Cloud com a Drive API ativada; (b) tela de consentimento
-     OAuth 2.0 e um OAuth Client ID do tipo Web (origens autorizadas = o domínio do ARCO); (c) autenticação com Google Identity
-     Services (token client) pedindo o escopo mínimo https://www.googleapis.com/auth/drive.file (ou drive.readonly, que é
-     “restrito” e exige verificação do app); (d) o Google Picker API (com chave de API restrita ao domínio) para o usuário escolher
-     os vídeos; (e) baixar o conteúdo com files.get?alt=media + header Authorization: Bearer <token> (os binários vêm por fetch,
-     em pedaços com Range, e entram no mesmo Store.put do IndexedDB); (f) tratamento de CORS, expiração do token e cotas.
-     Sem esses componentes (ou um backend próprio), não é possível ler o Drive de dentro do navegador.
+   - Não existe integração real com o Drive aqui. Uma URL de compartilhamento do Drive é uma PÁGINA HTML, não um vídeo: é recusada com aviso.
+     Baixe o vídeo para o aparelho e escolha o arquivo por "procure em todos os arquivos". Integrar de verdade exigiria Google Cloud
+     (Drive API + OAuth Client ID Web + Google Identity Services + Picker API) ou um backend próprio.
 
    Use apenas conteúdo próprio, de domínio público ou que você tenha autorização para reproduzir. */
 (() => {
@@ -186,7 +172,7 @@
 .cn-ok p{margin:0 0 14px;color:#cfcfcf;font-size:14px;line-height:1.5}
 @media(max-width:480px){#md .box.cn-form{border-radius:14px 14px 0 0;max-height:96vh}.cn-two{grid-template-columns:1fr}}
 /* ---- Reprodutor (camada própria, fora de #mn: nenhum render() do ARCO interrompe o filme) ---- */
-#cnp{position:fixed;top:0;right:0;bottom:0;left:var(--sw);z-index:20;background:#000;display:none;color:#fff;overscroll-behavior:contain}
+#cnp{position:fixed;top:0;right:0;bottom:0;left:var(--sw);z-index:2147483000;background:#000;display:none;color:#fff;overscroll-behavior:contain}
 #cnp.on{display:block}
 @media(max-width:760px){#cnp{left:0}}
 html.cn-lock{overflow:hidden}
@@ -309,6 +295,9 @@ html.cn-lock{overflow:hidden}
 }
 /* player: ocupa a tela toda, sem deixar a coluna do ARCO visível */
 #cnp{left:0}
+/* CORREÇÃO: com o player aberto, o catálogo some (nada pode ficar na frente do vídeo) e o <video> resiste a CSS global do ARCO */
+html.cn-lock .cn-root{visibility:hidden}
+#cnp video{display:block!important;visibility:visible!important;opacity:1!important;max-width:none!important;max-height:none!important;transform:none!important}
 /* formulários no mesmo padrão */
 #md .box.cn-form{background:#141414;border-color:#2a2a2a;border-radius:10px;box-shadow:0 30px 80px #000c}
 #md .box.cn-form h3{font-weight:800;letter-spacing:-.01em}
@@ -397,6 +386,12 @@ html.cn-lock{overflow:hidden}
   const guessType = n => MIME[extOf(n)] || 'video/mp4';
   const isVideo = f => /^video\//.test(f.type || '') || !!MIME[extOf(f.name)];
   const nameToTitle = n => String(n || '').replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+  /* MIME com o qual o Blob é entregue ao <video>: o tipo guardado, a menos que o navegador não o aceite (ex.: .mov/.m4v/.3gp → video/mp4) */
+  const playType = (type, name) => {
+    const t = type || guessType(name);
+    try { if (document.createElement('video').canPlayType(t)) return t; } catch (e) {}
+    return /^(mov|m4v|mp4|3gp)$/.test(extOf(name)) ? 'video/mp4' : t;
+  };
 
   /* Accept do seletor de VÍDEO (nunca image/*). A capa usa um seletor próprio, separado. */
   const VIDEO_ACCEPT = 'video/*,.mp4,.webm,.m4v,.ogv,.mov,.mkv,.3gp';
@@ -488,7 +483,7 @@ html.cn-lock{overflow:hidden}
       rows.sort((a, b) => a.i - b.i);
       let s = 0; rows.forEach(r => { s += r.blob.size; });
       if (rows.length !== m.n || s !== m.size) throw new Error('corrupt');
-      return new Blob(rows.map(r => r.blob), { type: m.type });
+      return new Blob(rows.map(r => r.blob), { type: playType(m.type, m.name) });
     },
     /* apaga vídeo + capa + legendas do filme; devolve os bytes liberados */
     async drop(mid) {
@@ -1019,6 +1014,26 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
       let freed = 0;
       for (const id of L) { try { freed += await Store.drop(id); HAS.delete(id); FSZ.delete(id); dropCov(id); } catch (e) { say(errMsg(e)); break; } }
       say(fmtSize(freed) + ' liberados.'); updStor();
+    },
+    /* DIAGNÓSTICO (console): CN.diag() lista, por filme, se há registro, pedaços íntegros e Blob legível. Devolve o array e mostra console.table. */
+    async diag() {
+      const out = [];
+      for (const m of list()) {
+        const r = { id: m.id, titulo: m.title, nomeArquivo: m.fileName || '', url: m.url || '', registro: false, pedacos: '', bytesOk: false, blob: '', erro: '' };
+        try {
+          const f = await Store.manifest(m.id);
+          if (f) {
+            r.registro = true;
+            const rows = await run('chunks', 'readonly', t => t.objectStore('chunks').getAll(rng(f.fid)));
+            let s = 0; rows.forEach(x => { s += x.blob.size; });
+            r.pedacos = rows.length + '/' + f.n; r.bytesOk = rows.length === f.n && s === f.size;
+            if (r.bytesOk) { const b = await Store.blob(m.id); r.blob = b.size + ' B · ' + (b.type || 'sem tipo'); }
+          }
+        } catch (e) { r.erro = (e && e.name ? e.name + ': ' : '') + (e && e.message || e); }
+        out.push(r);
+      }
+      try { console.table(out); } catch (e) {}
+      return out;
     }
   };
 
@@ -1028,8 +1043,7 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
        movieChanged(meta)   metadados criados/alterados (cópia simples, sem arquivos)
        movieDeleted(id)     filme excluído
        fileStored(id)       um arquivo de vídeo terminou de ser importado neste aparelho
-     O adapter pode usar window.ARCO_CINEMA_SYNC.store: { has(id), getFile(id):Promise<Blob|null>, putFile(id, File):Promise } para
-     enviar/baixar os binários (por exemplo, para um bucket). Os metadados continuam em S.cine (já exportáveis). */
+     O adapter pode usar window.ARCO_CINEMA_SYNC.store: { has(id), getFile(id):Promise<Blob|null>, putFile(id, File):Promise }. */
   const SyncAd = { a: null };
   const hook = (fn, ...a) => {
     try { const x = SyncAd.a && SyncAd.a[fn]; if (typeof x === 'function') Promise.resolve(x.apply(SyncAd.a, a)).catch(() => {}); } catch (e) {}
@@ -1343,9 +1357,15 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
       let b;
       try { b = await Store.blob(m.id); } catch (e) { if (g === W.gen) fail({ title: 'Não foi possível abrir o arquivo guardado', msg: errMsg(e), retry: String(e && e.message) !== 'corrupt' }); return; }
       if (g !== W.gen || !W.open) return;
-      if (!b) return fail({ title: 'Arquivo não encontrado neste aparelho', msg: 'O vídeo deste filme não está guardado aqui (ele pode ter sido importado em outro aparelho). Feche o player, abra o filme e use “Anexar arquivo”.', retry: false });
+      if (!b || !b.size) return fail({ title: 'Arquivo não encontrado neste aparelho', msg: 'O vídeo deste filme não está guardado aqui (ele pode ter sido importado em outro aparelho). Feche o player, abra o filme e use “Anexar arquivo”.', retry: false });
       W.obj = URL.createObjectURL(b); W.c = { k: 'file' };
       v.src = W.obj;
+      try { v.load(); } catch (e) {}
+      /* sem metadados em 25 s = o navegador não conseguiu abrir o Blob; mostra erro em vez de ficar girando para sempre */
+      W.lt = setTimeout(() => {
+        if (!W.open || W.err || v.readyState >= 1) return;
+        fail({ title: 'O navegador não conseguiu abrir o arquivo', msg: 'O vídeo foi lido do armazenamento (' + fmtSize(b.size) + '), mas o navegador não carregou seus dados em 25 segundos. O formato ou codec pode ser incompatível: converta para MP4 (H.264/AAC) ou WebM e importe de novo.' });
+      }, 25000);
       if (auto !== false) tryPlay();
       return;
     }
@@ -1378,8 +1398,8 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
   };
   const onErr = () => {
     if (!W.open || W.cleaning || W.err || (W.h && W.h.hls) || !v.currentSrc) return;
-    const code = v.error && v.error.code;
-    if (W.local) return fail({ title: 'Não foi possível reproduzir este arquivo', msg: 'O arquivo foi encontrado, mas este navegador não consegue decodificá-lo (codec ou formato incompatível, ou arquivo corrompido). Converta para MP4 (H.264/AAC) ou WebM e importe de novo.', retry: false });
+    const code = v.error && v.error.code, det = v.error && v.error.message ? ' Detalhe do navegador: ' + v.error.message + ' (código ' + code + ').' : code ? ' (código ' + code + ')' : '';
+    if (W.local) return fail({ title: 'Não foi possível reproduzir este arquivo', msg: 'O arquivo foi encontrado, mas este navegador não consegue decodificá-lo (codec ou formato incompatível, ou arquivo corrompido). Converta para MP4 (H.264/AAC) ou WebM e importe de novo.' + det, retry: false });
     fail(msgUrl(code, W.c));
   };
   const retry = () => { const t = W.lastT || 0; loadSource(W.qi, t, true); showCtl(); };
