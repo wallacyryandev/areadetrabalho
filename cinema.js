@@ -23,10 +23,12 @@
    - localStorage 'hub_cine_pref' = volume/velocidade/legenda (preferências só deste aparelho).
    - Filmes cadastrados na versão antiga (campo url) continuam tocando pelo link; novos filmes NÃO usam link.
 
-   SINCRONIZAÇÃO
-   - IndexedDB/localStorage NÃO sincronizam entre aparelhos. Metadados e progresso trafegam pelo canal de aparelhos pareados do Hub (SY).
-     Os ARQUIVOS DE VÍDEO NÃO trafegam: ficam só no aparelho onde foram importados. Num aparelho que recebeu só os metadados o filme
-     aparece como "Sem arquivo" e dá para anexar o arquivo (ou usar "Baixar arquivo" no aparelho de origem).
+   SINCRONIZAÇÃO (atualizada: agora o VÍDEO, a CAPA e as LEGENDAS também passam entre aparelhos)
+   - IndexedDB/localStorage não sincronizam sozinhos. Metadados e progresso trafegam pelo canal de aparelhos pareados do Hub (SY),
+     e agora também os ARQUIVOS: cada aparelho anuncia o que tem ('ci-have'); o que está sem vídeo/capa/legenda pede ao aparelho
+     que tem ('ci-get') e recebe em pedaços de 8 KB (base64 em JSON, com janela de confirmação 'ci-ack'), gravando direto no
+     IndexedDB em pedaços de 8 MB. Os dois aparelhos precisam estar conectados e com o ARCO aberto. Vídeos podem ser recebidos
+     automaticamente ou só manualmente (link "Receber vídeos automaticamente" no rodapé do catálogo).
    - Ponto de extensão futuro: window.ARCO_CINEMA_SYNC.register(adapter) (veja "SINCRONIZAÇÃO FUTURA"). Sem adapter, nada sai do aparelho.
 
    GOOGLE DRIVE (não implementado)
@@ -457,6 +459,7 @@ html.cn-lock .cn-root{visibility:hidden}
   }));
   const rng = fid => IDBKeyRange.bound([fid, 0], [fid, Infinity]);
   const dropChunks = fid => run('chunks', 'readwrite', t => { t.objectStore('chunks').delete(rng(fid)); });
+  const AK = new Set();
   const Store = {
     list: () => run('files', 'readonly', t => t.objectStore('files').getAll()).then(r => r || []),
     manifest: mid => run('files', 'readonly', t => t.objectStore('files').get(mid)),
@@ -494,11 +497,12 @@ html.cn-lock .cn-root{visibility:hidden}
         t.objectStore('assets').delete('cover:' + mid);
         t.objectStore('assets').delete('subs:' + mid);
       });
+      AK.delete('cover:' + mid); AK.delete('subs:' + mid);
       return m ? m.size : 0;
     },
-    assetPut: (k, val) => run('assets', 'readwrite', t => { t.objectStore('assets').put(Object.assign({ k }, val)); }),
+    assetPut: (k, val) => run('assets', 'readwrite', t => { t.objectStore('assets').put(Object.assign({ k }, val)); }).then(() => { AK.add(k); }),
     assetGet: k => run('assets', 'readonly', t => t.objectStore('assets').get(k)),
-    assetDel: k => run('assets', 'readwrite', t => { t.objectStore('assets').delete(k); }),
+    assetDel: k => run('assets', 'readwrite', t => { t.objectStore('assets').delete(k); }).then(() => { AK.delete(k); }),
     /* limpa pedaços de importações que não chegaram ao fim (ex.: aba fechada). Só os com mais de 10 min. */
     async gc() {
       const [keys, files] = await Promise.all([run('chunks', 'readonly', t => t.objectStore('chunks').getAllKeys()), Store.list()]);
@@ -521,7 +525,7 @@ html.cn-lock .cn-root{visibility:hidden}
   const COVP = new Map();
   const getCov = id => {
     let p = COVP.get(id);
-    if (!p) { p = Store.assetGet('cover:' + id).then(a => a && a.blob ? URL.createObjectURL(a.blob) : '').catch(() => ''); COVP.set(id, p); }
+    if (!p) { p = Store.assetGet('cover:' + id).then(a => a && a.blob ? URL.createObjectURL(a.blob) : '').catch(() => '').then(u => { if (!u && COVP.get(id) === p) COVP.delete(id); return u; }); COVP.set(id, p); }
     return p;
   };
   const dropCov = id => { const p = COVP.get(id); COVP.delete(id); if (p) p.then(u => { if (u) URL.revokeObjectURL(u); }); };
@@ -535,6 +539,7 @@ html.cn-lock .cn-root{visibility:hidden}
       });
     });
     updStor();
+    xfUI(true);
   };
   const hyd = () => setTimeout(hydrate, 0);
 
@@ -543,10 +548,12 @@ html.cn-lock .cn-root{visibility:hidden}
       FILES = await Store.list();
       HAS = new Set(FILES.map(f => f.mid));
       FSZ = new Map(FILES.map(f => [f.mid, f.size]));
+      try { (await run('assets', 'readonly', t => t.objectStore('assets').getAllKeys())).forEach(k => AK.add(k)); } catch (e) {}
       hasState = 'ready'; hasErr = '';
       Store.gc().catch(() => {});
     } catch (e) { hasState = 'err'; hasErr = errMsg(e); }
     refreshUI();
+    try { bcastHave(); pump(); } catch (e) {}
   }
   async function updStor() {
     const e = document.getElementById('cn-stor');
@@ -743,7 +750,7 @@ html.cn-lock .cn-root{visibility:hidden}
   const stateBanner = () => hasState === 'load' ? '<div class="cn-bn" role="status">Carregando sua biblioteca local…</div>'
     : hasState === 'err' ? `<div class="cn-bn er" role="alert"><b>Armazenamento local indisponível.</b> ${esc(hasErr)} Filmes com link antigo continuam funcionando, mas não é possível importar ou tocar arquivos locais.</div>` : '';
   const emptyView = () => `<div class="cn-empty">${IC.film}<h2>Sua biblioteca está vazia</h2><p>Adicione filmes escolhendo os arquivos de vídeo do seu computador ou celular. Eles ficam guardados neste aparelho, tocam sem internet e não dependem de links. O progresso é salvo automaticamente.</p><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar o primeiro filme</button><p style="margin:14px 0 0;font-size:12.5px">Use apenas filmes próprios, de domínio público ou que você tenha autorização para reproduzir.</p></div>`;
-  const head = () => `<div class="cn-hd"><span class="cn-brand"><button type="button" class="cn-ib" onclick="CN.exit()" aria-label="Sair do Cinema e voltar ao ARCO" title="Voltar ao ARCO">${IC.left}</button><h1><b>ARCO</b> Cinema</h1></span><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar filme</button></div><div id="cn-live" class="cn-bn" role="status" hidden></div>`;
+  const head = () => `<div class="cn-hd"><span class="cn-brand"><button type="button" class="cn-ib" onclick="CN.exit()" aria-label="Sair do Cinema e voltar ao ARCO" title="Voltar ao ARCO">${IC.left}</button><h1><b>ARCO</b> Cinema</h1></span><button type="button" class="cn-btn" onclick="CN.add()">${IC.plus}Adicionar filme</button></div><div id="cn-live" class="cn-bn" role="status" hidden></div><div id="cn-xf" class="cn-bn" role="status" hidden></div>`;
   const catalog = () => {
     if (!list().length) return `<div class="cn-root">${head()}${stateBanner()}${emptyView()}<p class="cn-sy" id="cn-stor"></p><p class="cn-sy" id="cn-sy">${syLine()}</p></div>`;
     if (st.sy) { const y = st.sy; st.sy = 0; setTimeout(() => window.scrollTo(0, y), 0); }
@@ -753,10 +760,10 @@ html.cn-lock .cn-root{visibility:hidden}
     const L = [];
     if (hasLocal(m.id)) L.push(`Arquivo guardado neste aparelho: ${esc(m.fileName || 'vídeo')} · ${fmtSize(FSZ.get(m.id) || m.fileSize)}`);
     else if (m.url) L.push(isDriveHost(host(m.url)) ? `Cadastro com link do Google Drive (${esc(host(m.url))}). Esse link não toca como vídeo. Edite o filme e importe o arquivo baixado.` : `Cadastro antigo com link externo (${esc(host(m.url))}). Para não depender do link, edite o filme e importe o arquivo.`);
-    else if (m.fileName) L.push(`O arquivo “${esc(m.fileName)}” (${fmtSize(m.fileSize)}) não está neste aparelho. Use “Anexar arquivo” e escolha o mesmo vídeo.`);
+    else if (m.fileName) L.push(`O arquivo “${esc(m.fileName)}” (${fmtSize(m.fileSize)}) não está neste aparelho. ` + (peerHas(m.id) ? `Um aparelho pareado tem o vídeo: <button type="button" class="cn-lk" onclick="CN.fetch('${m.id}')">receber agora</button>. Ou use “Anexar arquivo”.` : 'Conecte o aparelho que tem o vídeo (com o ARCO aberto) para recebê-lo, ou use “Anexar arquivo” e escolha o mesmo vídeo.'));
     return L.length ? `<p class="cn-src">${L.join('<br>')}</p>` : '';
   };
-  const detail = m => `<div class="cn-root"><div class="cn-hd"><span style="display:inline-flex;align-items:center;gap:10px"><button type="button" class="cn-ib" onclick="CN.back()" aria-label="Voltar">${IC.left}</button><b style="font-size:18px">Detalhes</b></span></div><div id="cn-live" class="cn-bn" role="status" hidden></div>${stateBanner()}${hero(m, true)}${infoLine(m)}</div>`;
+  const detail = m => `<div class="cn-root"><div class="cn-hd"><span style="display:inline-flex;align-items:center;gap:10px"><button type="button" class="cn-ib" onclick="CN.back()" aria-label="Voltar">${IC.left}</button><b style="font-size:18px">Detalhes</b></span></div><div id="cn-live" class="cn-bn" role="status" hidden></div><div id="cn-xf" class="cn-bn" role="status" hidden></div>${stateBanner()}${hero(m, true)}${infoLine(m)}</div>`;
   P.cin = () => {
     const m = st.v === 'det' ? mv(st.id) : null;
     hyd();
@@ -952,6 +959,7 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
         bcast({ t: 'ci-b', m: [mm] });
         hook('movieChanged', JSON.parse(JSON.stringify(mm)));
         if (stored) hook('fileStored', id);
+        bcastHave();
         FILES = FILES.filter(x => x.mid !== id);
         IMP.active = false; IMP.ctl = null;
         md.innerHTML = `<div class="box cn-form"><div class="cn-ok">${IC.check}<h3>${stored ? 'Importação concluída' : 'Alterações salvas'}</h3><p><b>${esc(title)}</b>${stored ? '<br>Arquivo guardado neste aparelho (' + fmtSize(ch.video.size) + '). Continua disponível depois de recarregar a página.' : ''}${warn.length ? '<br><span style="color:#ffd08a">' + esc(warn.join(' ')) + '</span>' : ''}</p><div class="cn-fa" style="justify-content:center">${playable(mm) ? `<button type="button" class="cn-btn" id="cn-go">${IC.play}Assistir agora</button>` : ''}<button type="button" class="cn-btn g" id="cn-x">Fechar</button></div></div></div>`;
@@ -1015,6 +1023,14 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
       for (const id of L) { try { freed += await Store.drop(id); HAS.delete(id); FSZ.delete(id); dropCov(id); } catch (e) { say(errMsg(e)); break; } }
       say(fmtSize(freed) + ' liberados.'); updStor();
     },
+    /* recebe agora o vídeo deste filme de um aparelho pareado que o tenha */
+    fetch(id) {
+      if (RX) { say('Aguarde a transferência atual terminar.'); return; }
+      for (const c of openConns()) { const e = c._have && c._have.get(id); if (e && e.f) { TRIED.delete(id + ':file'); startReq(c, e, 'file'); return; } }
+      say('Nenhum aparelho conectado tem o vídeo deste filme agora.');
+    },
+    xcancel() { rxAbort('Recebimento cancelado.', 1); },
+    auto() { setPref({ auto: !autoFile() }); updSy(); pump(); },
     /* DIAGNÓSTICO (console): CN.diag() lista, por filme, se há registro, pedaços íntegros e Blob legível. Devolve o array e mostra console.table. */
     async diag() {
       const out = [];
@@ -1510,18 +1526,178 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
     chunk(c.prog, 'p'); chunk(c.seen, 's');
     return out;
   };
-  const hello = c => packAll().forEach(b => sendJ(c, b));
+  const hello = c => { packAll().forEach(b => sendJ(c, b)); haveBatches().forEach(b => sendJ(c, b)); };
   const onData = (c, d) => {
     if (typeof d !== 'string' || d[0] !== '{') return;
     let m; try { m = JSON.parse(d); } catch (e) { return; }
     if (!m || typeof m.t !== 'string' || m.t.slice(0, 3) !== 'ci-') return;
     if (!c._ih) { c._ih = 1; hello(c); }
-    if (m.t === 'ci-b' && applyBatch(m)) { persist(); refreshUI(); }
+    if (m.t === 'ci-b') { if (applyBatch(m)) { persist(); refreshUI(); } pump(); }
+    else if (m.t === 'ci-have') {
+      if (!c._have) c._have = new Map();
+      (Array.isArray(m.f) ? m.f : []).slice(0, 100).forEach(e => { if (e && idOk(e.id)) c._have.set(e.id, { id: e.id, f: e.f ? 1 : 0, size: Math.max(0, Math.round(num(e.size))), cv: e.cv ? 1 : 0, sb: e.sb ? 1 : 0 }); });
+      if (st.v === 'det') refreshUI();
+      pump();
+    }
+    else if (m.t === 'ci-get') { if (TX.size < 3) txRun(c, m); }
+    else if (m.t === 'ci-d') rxData(m);
+    else if (m.t === 'ci-ack') { const t = TX.get(str(m.x, 30)); if (t && t.c === c) t.acked = Math.max(t.acked, num(m.i)); }
+    else if (m.t === 'ci-stop') { const t = TX.get(str(m.x, 30)); if (t && t.c === c) t.cancel = true; }
+    else if (m.t === 'ci-no') { if (RX && RX.c === c && RX.x === str(m.x, 30)) rxAbort(RX.k === 'file' ? 'O outro aparelho não tem mais o vídeo de “' + RX.title + '”.' : '', 1); }
+  };
+
+  /* ================= TRANSFERÊNCIA DE ARQUIVOS (vídeo, capa e legendas) entre aparelhos pareados =================
+     Fluxo: o aparelho que TEM anuncia 'ci-have'; quem NÃO tem pede 'ci-get' {x,id,k}; o dono envia 'ci-d' (pedaços de 8 KB em
+     base64, com no máximo WIN pedaços sem confirmação) e o receptor confirma com 'ci-ack'. O receptor grava direto no IndexedDB
+     (pedaços de 8 MB) e só registra o arquivo como completo quando o tamanho bate. Uma transferência recebida por vez. */
+  const PC = 8192, WIN = 40, ACKN = 10;
+  const TX = new Map(), TRIED = new Map();
+  let RX = null, xfT = 0;
+  const autoFile = () => getPref().auto !== false;
+  const b64 = blob => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => { const x = String(r.result); ok(x.slice(x.indexOf(',') + 1)); }; r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+  const unb64 = s => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+  const peerHas = id => { try { return openConns().some(c => { const e = c._have && c._have.get(id); return !!(e && e.f); }); } catch (e) { return false; } };
+  const haveEntries = () => list().map(m => ({ id: m.id, f: HAS.has(m.id) ? 1 : 0, size: FSZ.get(m.id) || 0, cv: AK.has('cover:' + m.id) ? 1 : 0, sb: AK.has('subs:' + m.id) ? 1 : 0 })).filter(e => e.f || e.cv || e.sb);
+  const haveBatches = () => { const L = haveEntries(), out = []; for (let i = 0; i < L.length; i += 60) out.push({ t: 'ci-have', f: L.slice(i, i + 60) }); return out; };
+  const bcastHave = () => { if (hasState !== 'ready') return; haveBatches().forEach(b => bcast(b)); };
+
+  /* barra de progresso no topo do catálogo (atualiza o texto sem recriar o botão Cancelar) */
+  const xfUI = force => {
+    const now = Date.now(); if (!force && now - xfT < 250) return; xfT = now;
+    const e = document.getElementById('cn-xf'); if (!e) return;
+    let txt = '', key = '';
+    if (RX) {
+      const p = RX.size ? Math.min(100, Math.round(RX.got / RX.size * 100)) : 0, what = RX.k === 'file' ? 'o vídeo de' : RX.k === 'cover' ? 'a capa de' : 'as legendas de';
+      key = 'rx'; txt = '⇣ Recebendo ' + what + ' “' + RX.title + '”' + (RX.size ? ' · ' + p + '% (' + fmtSize(RX.got) + ' de ' + fmtSize(RX.size) + ')' : '…');
+    } else {
+      const t = [...TX.values()].find(z => z.size);
+      if (t) { const m = mv(t.id); key = 'tx'; txt = '⇡ Enviando ' + (t.k === 'file' ? 'o vídeo' : t.k === 'cover' ? 'a capa' : 'as legendas') + ' de “' + (m ? m.title : '') + '” para outro aparelho · ' + Math.min(100, Math.round(t.sent / t.size * 100)) + '%'; }
+    }
+    if (!key) { e.hidden = true; e.dataset.k = ''; return; }
+    if (e.dataset.k !== key) { e.dataset.k = key; e.innerHTML = '<span id="cn-xft"></span>' + (key === 'rx' ? ' <button type="button" class="cn-lk" onclick="CN.xcancel()">Cancelar</button>' : ''); }
+    const t = document.getElementById('cn-xft'); if (t) t.textContent = txt;
+    e.hidden = false;
+  };
+  const xfTick = () => xfUI(false);
+
+  /* ---- lado que ENVIA ---- */
+  const txSource = async (id, k) => {
+    if (k === 'file') {
+      const f = await Store.manifest(id);
+      if (!f) return null;
+      return { size: f.size, name: f.name, type: f.type, chunk: async i => { const r = await run('chunks', 'readonly', t => t.objectStore('chunks').get([f.fid, i])); if (!r) throw new Error('corrupt'); return r.blob; } };
+    }
+    const a = await Store.assetGet((k === 'cover' ? 'cover:' : 'subs:') + id);
+    if (k === 'cover') return a && a.blob ? { size: a.blob.size, name: 'cover.jpg', type: 'image/jpeg', whole: a.blob } : null;
+    if (a && Array.isArray(a.list)) { const b = new Blob([JSON.stringify(a.list)], { type: 'application/json' }); return { size: b.size, name: 'subs.json', type: 'application/json', whole: b }; }
+    return null;
+  };
+  const txRun = async (c, m) => {
+    const x = str(m.x, 30), k = m.k, id = m.id;
+    if (!x || !idOk(id) || !/^(file|cover|subs)$/.test(k) || TX.has(x)) return;
+    const tx = { c, id, k, cancel: false, acked: -1, sent: 0, size: 0 };
+    TX.set(x, tx);
+    try {
+      const src = await txSource(id, k);
+      if (!src || !src.size) { sendJ(c, { t: 'ci-no', x }); return; }
+      tx.size = src.size;
+      const n = Math.ceil(src.size / PC); let cur = -1, cb = null;
+      for (let i = 0; i < n; i++) {
+        while (!tx.cancel && c.open && i - tx.acked > WIN) await wait(15);
+        if (tx.cancel || !c.open) return;
+        let piece;
+        if (src.whole) piece = src.whole.slice(i * PC, (i + 1) * PC);
+        else { const ci = Math.floor(i * PC / CH); if (ci !== cur) { cb = await src.chunk(ci); cur = ci; } const o = i * PC - ci * CH; piece = cb.slice(o, o + PC); }
+        const msg = { t: 'ci-d', x, i, d: await b64(piece) };
+        if (i === 0) Object.assign(msg, { s: src.size, n, nm: src.name, ty: src.type });
+        sendJ(c, msg);
+        tx.sent = Math.min(src.size, (i + 1) * PC);
+        xfTick();
+      }
+    } catch (e) { sendJ(c, { t: 'ci-no', x }); }
+    finally { TX.delete(x); xfUI(true); }
+  };
+
+  /* ---- lado que RECEBE ---- */
+  const rxAbort = (why, block) => {
+    const r = RX; if (!r) return;
+    RX = null;
+    if (r.k === 'file') dropChunks(r.fid).catch(() => {});
+    try { if (r.c.open) sendJ(r.c, { t: 'ci-stop', x: r.x }); } catch (e) {}
+    TRIED.set(r.id + ':' + r.k, Date.now() + (block ? 540000 : 0));
+    if (why) say(why);
+    xfUI(true);
+  };
+  const startReq = async (c, e, k) => {
+    const m = mv(e.id);
+    if (!m || RX) return;
+    TRIED.set(e.id + ':' + k, Date.now());
+    const r = RX = { x: rid(), id: e.id, k, c, title: m.title, size: k === 'file' ? e.size : 0, n: 0, i: -1, parts: [], pb: 0, cidx: 0, fid: rid(), chain: Promise.resolve(), got: 0, last: Date.now(), name: '', type: '' };
+    if (k === 'file') {
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (x) {}
+      try {
+        const est = navigator.storage && navigator.storage.estimate && await navigator.storage.estimate();
+        if (est && est.quota && e.size > est.quota - (est.usage || 0)) { if (RX === r) { RX = null; TRIED.set(e.id + ':file', Date.now() + 540000); say('Sem espaço para receber “' + m.title + '” (' + fmtSize(e.size) + '). Libere espaço e use “receber agora”.'); xfUI(true); } return; }
+      } catch (x) {}
+      if (RX !== r) return;
+    }
+    sendJ(c, { t: 'ci-get', x: r.x, id: e.id, k });
+    xfUI(true);
+  };
+  const rxDone = async r => {
+    if (r.got !== r.size) throw new Error('tamanho');
+    if (r.k === 'file') {
+      await run('files', 'readwrite', t => { t.objectStore('files').put({ mid: r.id, fid: r.fid, name: r.name || (r.title + '.mp4'), type: r.type || guessType(r.name), size: r.size, n: r.cidx, added: Date.now() }); });
+      HAS.add(r.id); FSZ.set(r.id, r.size);
+    } else if (r.k === 'cover') {
+      await Store.assetPut('cover:' + r.id, { blob: new Blob(r.parts, { type: 'image/jpeg' }) }); dropCov(r.id);
+    } else {
+      const L = JSON.parse(await new Blob(r.parts).text());
+      if (!Array.isArray(L)) throw new Error('legendas');
+      await Store.assetPut('subs:' + r.id, { list: L.slice(0, 20).map(s => ({ l: str(s && s.l, 60), vtt: s && typeof s.vtt === 'string' ? s.vtt.slice(0, 5242880) : '' })).filter(s => s.vtt) });
+    }
+    RX = null; TRIED.delete(r.id + ':' + r.k);
+    if (r.k === 'file') say('Filme recebido: “' + r.title + '”.');
+    xfUI(true); refreshUI(); setTimeout(pump, 50);
+  };
+  const rxData = m => {
+    const r = RX;
+    if (!r || m.x !== r.x || typeof m.d !== 'string' || m.d.length > 20000) return;
+    r.last = Date.now();
+    r.chain = r.chain.then(async () => {
+      if (RX !== r) return;
+      if (m.i !== r.i + 1) throw new Error('ordem');
+      if (m.i === 0) { r.size = Math.max(0, Math.round(num(m.s))); r.n = Math.round(num(m.n)); r.name = str(m.nm, 200); r.type = str(m.ty, 60); if (!r.size || !r.n) throw new Error('meta'); }
+      const u = unb64(m.d); r.i = m.i; r.parts.push(u); r.pb += u.length; r.got += u.length;
+      const last = r.i === r.n - 1;
+      if (r.k === 'file' && (r.pb >= CH || last)) {
+        const blob = new Blob(r.parts), ci = r.cidx++; r.parts = []; r.pb = 0;
+        await run('chunks', 'readwrite', t => { t.objectStore('chunks').put({ fid: r.fid, i: ci, blob }); });
+      }
+      if (RX !== r) return;
+      xfTick();
+      if (last) await rxDone(r);
+      else if ((r.i + 1) % ACKN === 0) sendJ(r.c, { t: 'ci-ack', x: r.x, i: r.i });
+    }).catch(e => { if (RX === r) rxAbort('Falha ao receber “' + r.title + '”: ' + (e && e.message === 'ordem' ? 'dados fora de ordem' : e && e.message === 'tamanho' ? 'o tamanho recebido não confere' : errMsg(e)), 1); });
+  };
+  /* decide o que pedir: primeiro capas e legendas (pequenas), depois vídeos (se o recebimento automático estiver ligado) */
+  const pump = () => {
+    if (RX || hasState !== 'ready') return;
+    for (const c of openConns()) {
+      if (!c._have) continue;
+      for (const e of c._have.values()) {
+        const m = mv(e.id); if (!m) continue;
+        const ok = k => { const t = TRIED.get(e.id + ':' + k); return !(t && Date.now() - t < 60000); };
+        if (e.cv && m.hasCover && !safeUrl(m.cover) && !AK.has('cover:' + e.id) && ok('cover')) { startReq(c, e, 'cover'); return; }
+        if (e.sb && !AK.has('subs:' + e.id) && ok('subs')) { startReq(c, e, 'subs'); return; }
+        if (e.f && !HAS.has(e.id) && autoFile() && ok('file')) { startReq(c, e, 'file'); return; }
+      }
+    }
   };
   const devName = id => { const l = (syOk() ? SY._c().links || [] : []).find(x => x.id == id); return l ? ((l.icon || '') + ' ' + l.name).trim() : 'Outro aparelho'; };
   const syLine = () => {
     const oc = openConns(), links = syOk() ? SY._c().links || [] : [];
-    const note = ' Só os dados do filme e o progresso são enviados; os arquivos de vídeo ficam apenas no aparelho onde foram importados.';
+    const note = ' Vídeos, capas e legendas também passam de um aparelho para o outro enquanto os dois estão conectados com o ARCO aberto. Receber vídeos automaticamente: <button type="button" class="cn-lk" onclick="CN.auto()">' + (autoFile() ? 'sim' : 'não') + '</button>.';
     if (oc.length) return `⇄ Dados sincronizados com ${oc.map(c => esc(devName(c.hid))).join(', ')} <button type="button" class="cn-lk" onclick="CN.sync()">Sincronizar agora</button>.${note}`;
     return (links.length ? '⇄ Nenhum aparelho pareado está conectado agora; os dados do catálogo e o progresso sincronizam quando o outro abrir o ARCO.' : '⇄ Para levar o catálogo e o progresso a outro aparelho, pareie em Configurações → Conectar dispositivo.') + note;
   };
@@ -1534,6 +1710,8 @@ ${m && v.url && !had ? `<div class="cn-fm wa">Este filme usa um link externo (ca
       oc.forEach(c => { if (!c._ci) { c._ci = 1; c.on('data', d => onData(c, d)); hello(c); } });
       const ids = oc.map(c => c.hid).sort().join(',');
       if (ids !== syIds) { syIds = ids; updSy(); }
+      if (RX && (!RX.c.open || Date.now() - RX.last > 30000)) rxAbort('A transferência de “' + RX.title + '” foi interrompida; tentarei de novo em instantes.');
+      pump();
     } catch (e) {}
   };
   CN.sync = () => {
